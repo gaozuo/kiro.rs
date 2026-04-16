@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.1.21] - 2026-04-16
+
+### 新增
+- **新增 Opus 4.7 模型别名支持** — 在 `/v1/models` 中暴露 `claude-opus-4-7` 及其 thinking/agentic 变体，并补齐 Anthropic 别名到上游 Opus 4.7 模型的映射，保持现有 Opus 4.6 使用方式一致 (`src/anthropic/handlers.rs`, `src/anthropic/converter.rs`)
+
 ## [v1.1.20] - 2026-04-16
 
 ### Changed
