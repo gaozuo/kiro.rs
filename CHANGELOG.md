@@ -4,6 +4,8 @@
 
 ### Changed
 - **429 限流改为凭据级冷却与自动分流** — Provider 现在会单独识别 429，解析并裁剪 `Retry-After`，将触发限流的凭据标记为 `RateLimitExceeded` 冷却；后续请求优先切换到其他可用凭据，无可切换时复用现有最短等待机制自动放慢转发速度，同时避免把 429 计入失败次数导致误禁号；补充了 `Retry-After`、默认冷却、切号、单号等待与亲和性绑定回切等回归测试 (`src/kiro/provider.rs`, `src/kiro/token_manager.rs`)
+- **WebSearch 失败路径保持 cache usage 字段稳定** — 在 prompt cache accounting 开启时，MCP 失败降级路径继续返回默认的 `WebSearchCacheContext`，确保 `cache_creation_input_tokens` / `cache_read_input_tokens` 在失败响应中仍稳定存在且为 0；新增失败路径回归测试，避免 usage schema 只在异常时回退 (`src/anthropic/websearch.rs`)
+- **新增 promptCacheAccountingEnabled 开关并统一三条 usage 路径** — 新增配置 `promptCacheAccountingEnabled`，默认开启；关闭后会跳过本地伪缓存读写，并且 stream / non-stream / websearch 三条 usage 路径都不再输出或扣减 cache token。关键改动覆盖 `src/model/config.rs`、`src/anthropic/middleware.rs`、`src/anthropic/handlers.rs`、`src/anthropic/stream.rs`、`src/anthropic/websearch.rs`，示例配置已同步到 `config.example.json`。
 
 ## [v1.1.21] - 2026-04-16
 

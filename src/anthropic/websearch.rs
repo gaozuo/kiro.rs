@@ -696,7 +696,11 @@ pub async fn handle_websearch_request(
         }
         Err(e) => {
             tracing::warn!("MCP API 调用失败: {}", e);
-            (None, None)
+            let fallback_cache_context = match (cache_tracker, cache_profile) {
+                (Some(_), Some(_)) => Some(WebSearchCacheContext::default()),
+                _ => None,
+            };
+            (None, fallback_cache_context)
         }
     };
 
@@ -945,6 +949,52 @@ mod tests {
                 .is_none()
         );
         assert!(message_delta.data["usage"].get("cache_creation").is_none());
+    }
+
+    #[test]
+    fn test_websearch_failure_path_keeps_zero_cache_usage_when_accounting_enabled() {
+        let summary = generate_search_summary("rust", &None);
+        let output_tokens = (summary.len() as i32 + 3) / 4;
+        let cache_context = Some(WebSearchCacheContext::default());
+        let billed = billed_input_tokens(123, 0, 0);
+
+        let events = generate_websearch_events(
+            "claude-sonnet-4",
+            "rust",
+            "srvtoolu_test",
+            None,
+            123,
+            cache_context,
+        );
+
+        let message_start = events
+            .iter()
+            .find(|e| e.event == "message_start")
+            .expect("should have message_start");
+        let message_delta = events
+            .iter()
+            .find(|e| e.event == "message_delta")
+            .expect("should have message_delta");
+
+        assert_eq!(
+            message_start.data["message"]["usage"]["input_tokens"],
+            billed
+        );
+        assert_eq!(
+            message_start.data["message"]["usage"]["cache_creation_input_tokens"],
+            0
+        );
+        assert_eq!(
+            message_start.data["message"]["usage"]["cache_read_input_tokens"],
+            0
+        );
+        assert_eq!(message_delta.data["usage"]["input_tokens"], billed);
+        assert_eq!(
+            message_delta.data["usage"]["cache_creation_input_tokens"],
+            0
+        );
+        assert_eq!(message_delta.data["usage"]["cache_read_input_tokens"], 0);
+        assert_eq!(message_delta.data["usage"]["output_tokens"], output_tokens);
     }
 
     #[test]
