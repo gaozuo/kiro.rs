@@ -11,7 +11,10 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM node:24-alpine AS frontend-builder
 WORKDIR /app/admin-ui
 COPY admin-ui/package.json ./
-RUN npm install -g pnpm && pnpm install
+# pnpm 10.x 会把 ignored build scripts 当作错误（ERR_PNPM_IGNORED_BUILDS）。
+# @swc/core 的平台专用二进制通过 optional dependencies 提供，
+# 不依赖 postinstall 脚本，--ignore-scripts 在容器构建中安全且更快。
+RUN npm install -g pnpm && pnpm install --ignore-scripts
 COPY admin-ui ./
 RUN pnpm build
 
