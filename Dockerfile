@@ -11,7 +11,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM node:24-alpine AS frontend-builder
 WORKDIR /app/admin-ui
 COPY admin-ui/package.json ./
-RUN npm install -g pnpm && pnpm install
+# pnpm 9.x 要求显式批准 build scripts（@swc/core、esbuild 等原生模块），
+# CI/Docker 环境无交互能力，直接注入 .npmrc 绕过。
+RUN echo 'onlyBuiltDependencies=*' > .npmrc && npm install -g pnpm && pnpm install
 COPY admin-ui ./
 RUN pnpm build
 
