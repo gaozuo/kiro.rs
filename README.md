@@ -17,7 +17,7 @@
 - **credentialRpm: 0 真禁用本地限流**：原版 `0` 会落回默认 1-2 秒间隔 + 每日 500 上限（与字面意思相反）。Fork 让 `0` 真的跳过所有本地限流检查。
 - **CI 简化**：删除 Linux/macOS/Windows 二进制 release workflow，仅保留 Docker Hub 自动构建（push tag `v*` 触发）。
 
-镜像：`mjyuan/kiro-rs:latest`（不含本次修复的请用上游镜像 `ghcr.io/hank9999/kiro-rs:latest`）。
+镜像：`myuan6/kiro-rs:latest`（不含本次修复的请用上游镜像 `ghcr.io/hank9999/kiro-rs:latest`）。
 
 ---
 
@@ -177,9 +177,9 @@ curl http://127.0.0.1:8990/v1/messages \
 本 fork 的镜像发布在 Docker Hub：
 
 ```bash
-docker pull mjyuan/kiro-rs:latest
+docker pull myuan6/kiro-rs:latest
 # 或指定版本
-docker pull mjyuan/kiro-rs:v1.1.31
+docker pull myuan6/kiro-rs:v1.1.31
 ```
 
 支持 `linux/amd64` 和 `linux/arm64` 双架构，每次 push tag `v*` 时由 GitHub Actions 自动构建。
@@ -191,7 +191,7 @@ docker pull mjyuan/kiro-rs:v1.1.31
 docker compose up -d
 ```
 
-> 注意：仓库自带的 `docker-compose.yml` 默认拉取 `ghcr.io/hank9999/kiro-rs:latest`（**不含本 fork 的修复**）。要用 fork 版镜像，把 `image:` 改为 `mjyuan/kiro-rs:latest`，或改用 `build: .` 本地构建。
+> 注意：仓库自带的 `docker-compose.yml` 默认拉取 `ghcr.io/hank9999/kiro-rs:latest`（**不含本 fork 的修复**）。要用 fork 版镜像，把 `image:` 改为 `myuan6/kiro-rs:latest`，或改用 `build: .` 本地构建。
 
 **本地构建**
 
