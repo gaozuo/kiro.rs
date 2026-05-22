@@ -188,7 +188,7 @@ curl http://127.0.0.1:8990/v1/messages \
 ```bash
 docker pull myuan6/kiro-rs:latest
 # 或指定版本
-docker pull myuan6/kiro-rs:v1.1.31
+docker pull myuan6/kiro-rs:v1.1.32
 ```
 
 支持 `linux/amd64` 和 `linux/arm64` 双架构，每次 push tag `v*` 时由 GitHub Actions 自动构建。构建依赖仓库 Secrets：
@@ -211,7 +211,7 @@ docker buildx create --use --name kiro-rs-builder 2>/dev/null || docker buildx u
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -t <你的DockerHub用户名>/kiro-rs:latest \
-  -t <你的DockerHub用户名>/kiro-rs:v1.1.31 \
+  -t <你的DockerHub用户名>/kiro-rs:v1.1.32 \
   --push .
 ```
 
