@@ -252,7 +252,7 @@ docker pull ghcr.io/gaozuo/kiro-rs:latest
 docker pull ghcr.io/gaozuo/kiro-rs:v1.1.38
 ```
 
-支持 `linux/amd64` 和 `linux/arm64` 双架构，每次 push tag `v*` 时由 GitHub Actions 自动构建；也可以在 Actions 页面手动运行 `Build & Push Docker Image`。GHCR 发布使用仓库自带的 `GITHUB_TOKEN`，不需要额外 Docker Hub secrets。
+GHCR 自动发布当前构建 `linux/amd64` 镜像；每次 push tag `v*` 时由 GitHub Actions 自动构建，也可以在 Actions 页面手动运行 `Build & Push Docker Image`。GHCR 发布使用仓库自带的 `GITHUB_TOKEN`，不需要额外 Docker Hub secrets。
 
 手动本地构建并推送示例：
 
@@ -264,10 +264,10 @@ echo "$GITHUB_TOKEN" | docker login ghcr.io -u gaozuo --password-stdin
 docker build -t ghcr.io/gaozuo/kiro-rs:latest .
 docker push ghcr.io/gaozuo/kiro-rs:latest
 
-# 多平台构建并推送（推荐）
+# 单平台构建并推送（与 GitHub Actions 一致）
 docker buildx create --use --name kiro-rs-builder 2>/dev/null || docker buildx use kiro-rs-builder
 docker buildx build \
-  --platform linux/amd64,linux/arm64 \
+  --platform linux/amd64 \
   -t ghcr.io/gaozuo/kiro-rs:latest \
   -t ghcr.io/gaozuo/kiro-rs:v1.1.38 \
   --push .
