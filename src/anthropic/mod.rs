@@ -22,6 +22,7 @@ mod compressor;
 mod converter;
 mod handlers;
 mod middleware;
+mod model_catalog;
 mod router;
 mod stream;
 mod tool_compression;

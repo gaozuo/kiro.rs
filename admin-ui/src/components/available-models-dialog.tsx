@@ -61,11 +61,11 @@ export function AvailableModelsDialog({ open, onOpenChange }: AvailableModelsDia
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>全局可用模型 ({AVAILABLE_MODELS.length})</DialogTitle>
+          <DialogTitle>模型目录 ({AVAILABLE_MODELS.length})</DialogTitle>
         </DialogHeader>
 
         <div className="text-xs text-muted-foreground">
-          该列表对应当前服务 <code>/v1/models</code> 暴露的固定模型集合；不是按单个凭据动态区分。
+          该目录展示代理支持的模型；实际 <code>/v1/models</code> 返回当前启用且套餐可识别凭据的可用并集，未知套餐名凭据不会暴露任何模型。
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto rounded-md border">

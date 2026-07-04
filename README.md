@@ -18,7 +18,7 @@
 - **凭据级 IdP/代理/Admin Portal 设置**：Admin UI 支持编辑凭据级 Auth/API Region、IdC `clientId/clientSecret`、HTTP/SOCKS5 代理与 `direct` 直连覆盖。
 - **Overages 在线启停与状态同步**：Admin UI 支持 SSE 实时开启/关闭 Overages；后端会从 Web Portal 与 `GetUserUsageAndLimits` 同步 overage 状态，并持久化到凭据。
 - **Overage-aware 余额与自动禁用**：余额展示、缓存与自动禁用逻辑使用“基础额度 + 超额额度”的有效额度；上游未返回 `overageEnabled` 时不会误判为关闭。
-- **Admin 详情页白屏修复与全局模型列表**：修复凭据详情渲染问题；固定 `/v1/models` 能力列表不再在每个凭据详情重复显示，改为 Admin 顶部全局“可用模型”。
+- **Admin 详情页白屏修复与模型列表入口**：修复凭据详情渲染问题；模型列表不再在每个凭据详情重复显示，改为 Admin 顶部“可用模型”入口。
 - **Thinking 兼容增强**：`claude-sonnet-5-thinking`、`claude-opus-4-7-thinking` / `claude-opus-4-8-thinking` 与 `claude-opus-4-6-thinking` 一样走 adaptive thinking；客户端即使选择不带 `-thinking` 的模型，只要请求带 `thinking` 参数也会启用思考。
 - **Release 与 GHCR 自动构建**：保留多平台二进制 release workflow，并在 push tag `v*` 时自动构建 GitHub Container Registry 镜像。
 
@@ -572,7 +572,13 @@ Thinking 配置规则：
 
 ## 模型映射
 
-`GET /v1/models` 返回当前服务固定暴露的模型能力列表；该列表不按单个凭据动态区分。Admin UI 顶部“可用模型”弹窗展示的也是这个全局列表。
+`GET /v1/models` 返回当前已启用、且套餐名可识别的 Kiro 凭据所支持模型 ID 的并集。没有凭据、没有启用凭据，或只有未知套餐名时，会返回空列表，不会回退到完整代理目录。
+
+未知套餐名会被视为暂不可判断模型访问权限，直到余额/用量查询记录到 `KIRO FREE`、`KIRO PRO`、`KIRO PRO+`、`KIRO PRO MAX` 或 `KIRO POWER` 等可识别套餐。
+
+请求转发使用同一张能力表：例如 `claude-sonnet-5` 或 Opus 模型请求不会被路由到 Free 凭据。
+
+`-thinking` 和 `-agentic` 后缀是代理暴露的模型变体，也参与同一张能力表判断。例如 `claude-sonnet-5-thinking` 与 `claude-sonnet-5` 一样需要付费套餐凭据，Free 凭据不会承接该请求。
 
 | Anthropic 模型 | Kiro 模型 |
 |----------------|-----------|
@@ -595,11 +601,11 @@ Sonnet 5 的 thinking 行为与使用限制见 [docs/claude-sonnet-5.md](docs/cl
 
 - `GET /admin` - 访问管理页面（需要在编译前构建 `admin-ui/dist`）。
 - 凭据列表：查看启用状态、优先级、邮箱、Region、代理、余额、Overages 状态与失败计数。
-- 凭据详情：查看账号信息、余额、Region、IdC 与代理配置；避免在每个凭据详情重复展示固定模型列表。
+- 凭据详情：查看账号信息、余额、Region、IdC 与代理配置；避免在每个凭据详情重复展示模型列表。
 - 凭据编辑：支持修改凭据级 Auth/API Region、IdC `clientId/clientSecret`、HTTP/SOCKS5 代理；`proxyUrl: "direct"` 表示该凭据显式直连。
 - Overages 管理：支持从 Admin UI 发起开启/关闭 Overages，并通过 SSE 展示实时进度；成功后状态会同步到凭据文件。
 - 余额管理：单凭据实时查询余额；列表页使用缓存余额，缓存包含有效总额度、剩余额度、Overages 开关和超额上限。
-- 全局可用模型：顶部“可用模型”展示 `/v1/models` 暴露的固定模型集合。该列表是服务能力列表，不按单个凭据区分。
+- 全局可用模型：顶部“可用模型”提供模型目录入口；实际 API 可用集合以 `/v1/models` 按当前启用凭据动态返回的并集为准。
 
 ### Admin API
 
