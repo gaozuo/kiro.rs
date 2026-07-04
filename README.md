@@ -22,7 +22,7 @@
 - **Thinking 兼容增强**：`claude-sonnet-5-thinking`、`claude-opus-4-7-thinking` / `claude-opus-4-8-thinking` 与 `claude-opus-4-6-thinking` 一样走 adaptive thinking；客户端即使选择不带 `-thinking` 的模型，只要请求带 `thinking` 参数也会启用思考。
 - **Release 与 GHCR 自动构建**：保留多平台二进制 release workflow，并在 push tag `v*` 时自动构建 GitHub Container Registry 镜像。
 
-镜像：`ghcr.io/gaozuo/kiro-rs:latest`。
+镜像：`ghcr.io/gaozuo/kiro-rs:v1.1.38`。
 
 ---
 
@@ -247,9 +247,9 @@ curl http://127.0.0.1:8990/v1/messages \
 本 fork 的镜像发布在 GitHub Container Registry：
 
 ```bash
-docker pull ghcr.io/gaozuo/kiro-rs:latest
-# 或指定版本
 docker pull ghcr.io/gaozuo/kiro-rs:v1.1.38
+# 或跟随最新构建
+docker pull ghcr.io/gaozuo/kiro-rs:latest
 ```
 
 GHCR 自动发布当前构建 `linux/amd64` 镜像；每次 push tag `v*` 时由 GitHub Actions 自动构建，也可以在 Actions 页面手动运行 `Build & Push Docker Image`。GHCR 发布使用仓库自带的 `GITHUB_TOKEN`，不需要额外 Docker Hub secrets。
@@ -287,11 +287,13 @@ git push gaozuo v1.1.38
 docker compose up -d
 ```
 
-仓库自带的 `docker-compose.yml` 默认拉取 `ghcr.io/gaozuo/kiro-rs:latest`。如需固定版本：
+仓库自带的 `docker-compose.yml` 默认固定拉取 `ghcr.io/gaozuo/kiro-rs:v1.1.38`，并指定 `linux/amd64` 平台以兼容当前 GHCR 单架构镜像。如需跟随最新构建：
 
 ```bash
-IMAGE_TAG=v1.1.38 docker compose up -d
+IMAGE_TAG=latest docker compose up -d
 ```
+
+如果后续发布了多架构镜像，可以通过 `DOCKER_PLATFORM=linux/arm64` 覆盖平台。
 
 **本地构建**
 
