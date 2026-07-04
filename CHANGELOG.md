@@ -1,9 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [v1.1.38] - 2026-07-04
 
 ### Added
 - **新增 Claude Sonnet 5 模型支持** — `/v1/models` 和 Admin UI 暴露 `claude-sonnet-5`、`claude-sonnet-5-thinking`、`claude-sonnet-5-agentic`；Anthropic→Kiro 模型映射支持 `sonnet-5`，上下文窗口按 1M 处理，`claude-sonnet-5-thinking` 使用 adaptive thinking + `output_config.effort = high`，并补充 Sonnet 5 使用说明 (`src/anthropic/handlers.rs`, `src/anthropic/converter.rs`, `src/anthropic/types.rs`, `admin-ui/src/components/available-models-dialog.tsx`, `docs/claude-sonnet-5.md`, `README.md`)
+- **Docker 镜像发布切换到 GHCR** — Docker workflow 改为发布 `ghcr.io/gaozuo/kiro-rs`，使用 `GITHUB_TOKEN` 写入 GitHub Container Registry，并保留 tag 触发与手动触发；`docker-compose.yml` 默认固定使用本 fork 的 GHCR 镜像，可通过 `IMAGE_TAG` 固定版本 (`.github/workflows/docker-build.yml`, `docker-compose.yml`, `README.md`)
 
 ## [v1.1.37] - 2026-05-29
 

@@ -1,8 +1,8 @@
 services:
   kiro-rs:
-    # 使用国内镜像
-    # image: ghcr.nju.edu.cn/${IMAGE_OWNER:-hank9999}/kiro-rs:${IMAGE_TAG:-latest}
-    image: ghcr.io/${IMAGE_OWNER:-hank9999}/kiro-rs:${IMAGE_TAG:-latest}
+    # 默认固定使用本 fork 发布到 GHCR 的镜像。
+    # 如需固定版本：IMAGE_TAG=v1.1.38 docker compose up -d
+    image: ghcr.io/${IMAGE_OWNER:-gaozuo}/kiro-rs:${IMAGE_TAG:-latest}
     container_name: kiro-rs
     extra_hosts:
       - "host.docker.internal:host-gateway"

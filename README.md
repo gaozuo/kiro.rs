@@ -20,9 +20,9 @@
 - **Overage-aware 余额与自动禁用**：余额展示、缓存与自动禁用逻辑使用“基础额度 + 超额额度”的有效额度；上游未返回 `overageEnabled` 时不会误判为关闭。
 - **Admin 详情页白屏修复与全局模型列表**：修复凭据详情渲染问题；固定 `/v1/models` 能力列表不再在每个凭据详情重复显示，改为 Admin 顶部全局“可用模型”。
 - **Thinking 兼容增强**：`claude-sonnet-5-thinking`、`claude-opus-4-7-thinking` / `claude-opus-4-8-thinking` 与 `claude-opus-4-6-thinking` 一样走 adaptive thinking；客户端即使选择不带 `-thinking` 的模型，只要请求带 `thinking` 参数也会启用思考。
-- **Release 与 Docker Hub 自动构建**：保留多平台二进制 release workflow，并在 push tag `v*` 时自动构建 Docker Hub 镜像。
+- **Release 与 GHCR 自动构建**：保留多平台二进制 release workflow，并在 push tag `v*` 时自动构建 GitHub Container Registry 镜像。
 
-镜像：`foxfishs/kiro-rs:latest`（不含本次修复的请用上游镜像 `ghcr.io/hank9999/kiro-rs:latest`）。
+镜像：`ghcr.io/gaozuo/kiro-rs:latest`。
 
 ---
 
@@ -244,39 +244,41 @@ curl http://127.0.0.1:8990/v1/messages \
 
 **使用预构建镜像（推荐）**
 
-本 fork 的镜像发布在 Docker Hub：
+本 fork 的镜像发布在 GitHub Container Registry：
 
 ```bash
-docker pull foxfishs/kiro-rs:latest
+docker pull ghcr.io/gaozuo/kiro-rs:latest
 # 或指定版本
-docker pull foxfishs/kiro-rs:v1.1.34
+docker pull ghcr.io/gaozuo/kiro-rs:v1.1.38
 ```
 
-支持 `linux/amd64` 和 `linux/arm64` 双架构，每次 push tag `v*` 时由 GitHub Actions 自动构建。构建依赖仓库 Secrets：
-
-- `DOCKERHUB_USERNAME`：Docker Hub 用户名
-- `DOCKERHUB_TOKEN`：Docker Hub Access Token
+支持 `linux/amd64` 和 `linux/arm64` 双架构，每次 push tag `v*` 时由 GitHub Actions 自动构建；也可以在 Actions 页面手动运行 `Build & Push Docker Image`。GHCR 发布使用仓库自带的 `GITHUB_TOKEN`，不需要额外 Docker Hub secrets。
 
 手动本地构建并推送示例：
 
 ```bash
-# 登录 Docker Hub
-docker login
+# 登录 GHCR
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u gaozuo --password-stdin
 
 # 单平台本地构建
-docker build -t <你的DockerHub用户名>/kiro-rs:latest .
-docker push <你的DockerHub用户名>/kiro-rs:latest
+docker build -t ghcr.io/gaozuo/kiro-rs:latest .
+docker push ghcr.io/gaozuo/kiro-rs:latest
 
 # 多平台构建并推送（推荐）
 docker buildx create --use --name kiro-rs-builder 2>/dev/null || docker buildx use kiro-rs-builder
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t <你的DockerHub用户名>/kiro-rs:latest \
-  -t <你的DockerHub用户名>/kiro-rs:v1.1.34 \
+  -t ghcr.io/gaozuo/kiro-rs:latest \
+  -t ghcr.io/gaozuo/kiro-rs:v1.1.38 \
   --push .
 ```
 
-如果使用 GitHub Actions 自动构建，只需要在 GitHub 仓库 Settings → Secrets and variables → Actions 中配置上面两个 Docker Hub secret，然后推送 `v*` tag。
+如果使用 GitHub Actions 自动构建，只需要推送 `v*` tag：
+
+```bash
+git tag v1.1.38
+git push gaozuo v1.1.38
+```
 
 **docker-compose 方式**
 
@@ -285,7 +287,11 @@ docker buildx build \
 docker compose up -d
 ```
 
-> 注意：仓库自带的 `docker-compose.yml` 默认拉取 `ghcr.io/hank9999/kiro-rs:latest`（**不含本 fork 的修复**）。要用 fork 版镜像，把 `image:` 改为 `foxfishs/kiro-rs:latest`，或改用 `build: .` 本地构建。
+仓库自带的 `docker-compose.yml` 默认拉取 `ghcr.io/gaozuo/kiro-rs:latest`。如需固定版本：
+
+```bash
+IMAGE_TAG=v1.1.38 docker compose up -d
+```
 
 **本地构建**
 
