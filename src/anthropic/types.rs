@@ -321,15 +321,36 @@ pub struct CountTokensResponse {
 
 /// 根据模型名称获取上下文窗口大小
 ///
-/// - Opus 4.6 和 Sonnet 4.6 系列: 1,000,000 tokens
+/// - Sonnet 5、Sonnet 4.6 和 Opus 4.6+ 系列: 1,000,000 tokens
 /// - 其他模型: 200,000 tokens
 pub fn get_context_window_size(model: &str) -> i32 {
     let model_lower = model.to_lowercase();
-    if (model_lower.contains("opus") || model_lower.contains("sonnet"))
-        && (model_lower.contains("4-6") || model_lower.contains("4.6"))
+    if model_lower.contains("sonnet-5")
+        || (model_lower.contains("sonnet")
+            && (model_lower.contains("4-6") || model_lower.contains("4.6")))
+        || (model_lower.contains("opus")
+            && (model_lower.contains("4-6")
+                || model_lower.contains("4.6")
+                || model_lower.contains("4-7")
+                || model_lower.contains("4.7")
+                || model_lower.contains("4-8")
+                || model_lower.contains("4.8")))
     {
         1_000_000
     } else {
         200_000
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_context_window_size;
+
+    #[test]
+    fn test_context_window_size_for_large_context_models() {
+        assert_eq!(get_context_window_size("claude-sonnet-5"), 1_000_000);
+        assert_eq!(get_context_window_size("claude-sonnet-4-6"), 1_000_000);
+        assert_eq!(get_context_window_size("claude-opus-4-7"), 1_000_000);
+        assert_eq!(get_context_window_size("claude-sonnet-4-5-20250929"), 200_000);
     }
 }

@@ -723,6 +723,42 @@ pub async fn get_models(OriginalUri(uri): OriginalUri) -> impl IntoResponse {
 
     let models = vec![
         Model {
+            id: "claude-sonnet-5".to_string(),
+            object: "model".to_string(),
+            created: 1782777600,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 5".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 128_000,
+            context_length: Some(1_000_000),
+            max_completion_tokens: Some(128_000),
+            thinking: Some(true),
+        },
+        Model {
+            id: "claude-sonnet-5-thinking".to_string(),
+            object: "model".to_string(),
+            created: 1782777600,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 5 (Thinking)".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 128_000,
+            context_length: Some(1_000_000),
+            max_completion_tokens: Some(128_000),
+            thinking: Some(true),
+        },
+        Model {
+            id: "claude-sonnet-5-agentic".to_string(),
+            object: "model".to_string(),
+            created: 1782777600,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 5 (Agentic)".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 128_000,
+            context_length: Some(1_000_000),
+            max_completion_tokens: Some(128_000),
+            thinking: Some(true),
+        },
+        Model {
             id: "claude-sonnet-4-6".to_string(),
             object: "model".to_string(),
             created: 1770314400,
@@ -1739,9 +1775,9 @@ async fn handle_non_stream_request(
 /// 若模型名没有 thinking 后缀但客户端发送了 thinking 参数，则使用客户端 budget_tokens。
 /// 如果客户端未设置有效预算，或预算 <= 0，则默认使用 high（24576）。
 ///
-/// - Opus 4.7 官方只支持 adaptive thinking：不能使用 `enabled + budget_tokens` 手动预算
+/// - Sonnet 5 / Opus 4.7+ 官方只支持 adaptive thinking：不能使用 `enabled + budget_tokens` 手动预算
 /// - Opus/Sonnet 4.6 仍兼容 `enabled + budget_tokens`，但官方已标记 deprecated
-/// - 裸 `-thinking` 模型后缀：强制开启 thinking；Opus 4.7 走 adaptive + high effort，其它模型走 enabled + budget
+/// - 裸 `-thinking` 模型后缀：强制开启 thinking；Sonnet 5 / Opus 4.7+ 走 adaptive + high effort，其它模型走 enabled + budget
 fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
     let model_lower = payload.model.to_lowercase();
 
@@ -1769,14 +1805,15 @@ fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
         return;
     };
 
-    // Opus 4.7 / 4.8 上游已弃用 `enabled + budget_tokens`，必须走 adaptive；
+    // Sonnet 5、Opus 4.7 / 4.8 上游已弃用 `enabled + budget_tokens`，必须走 adaptive；
     // 其它模型保留 `enabled + budget_tokens` 兼容路径。
-    let is_opus_adaptive_only = model_lower.contains("opus")
+    let is_adaptive_only = model_lower.contains("sonnet-5")
+        || (model_lower.contains("opus")
         && (model_lower.contains("4-7")
             || model_lower.contains("4.7")
             || model_lower.contains("4-8")
-            || model_lower.contains("4.8"));
-    let thinking_type = if is_opus_adaptive_only {
+            || model_lower.contains("4.8")));
+    let thinking_type = if is_adaptive_only {
         "adaptive"
     } else {
         "enabled"
@@ -1795,7 +1832,7 @@ fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
         budget_tokens,
     });
 
-    if is_opus_adaptive_only {
+    if is_adaptive_only {
         payload.output_config = Some(super::types::OutputConfig {
             effort: "high".to_string(),
         });
@@ -2227,6 +2264,25 @@ mod tests {
         );
         assert_eq!(
             opus_48.output_config.as_ref().map(|c| c.effort.as_str()),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn test_sonnet_5_thinking_suffix_uses_adaptive_mode() {
+        let mut payload = sample_messages_request();
+        payload.model = "claude-sonnet-5-thinking".to_string();
+        payload.output_config = None;
+
+        override_thinking_from_model_name(&mut payload);
+
+        assert_eq!(
+            payload.thinking.as_ref().map(|t| t.thinking_type.as_str()),
+            Some("adaptive")
+        );
+        assert_eq!(payload.thinking.as_ref().map(|t| t.budget_tokens), Some(24576));
+        assert_eq!(
+            payload.output_config.as_ref().map(|c| c.effort.as_str()),
             Some("high")
         );
     }

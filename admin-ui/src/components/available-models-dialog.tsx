@@ -14,6 +14,9 @@ export interface AvailableModelInfo {
 }
 
 export const AVAILABLE_MODELS: AvailableModelInfo[] = [
+  { id: 'claude-sonnet-5', displayName: 'Claude Sonnet 5', multiplier: 1.3, variant: 'base' },
+  { id: 'claude-sonnet-5-thinking', displayName: 'Claude Sonnet 5 (Thinking)', multiplier: 1.3, variant: 'thinking' },
+  { id: 'claude-sonnet-5-agentic', displayName: 'Claude Sonnet 5 (Agentic)', multiplier: 1.3, variant: 'agentic' },
   { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', multiplier: 1.3, variant: 'base' },
   { id: 'claude-sonnet-4-6-thinking', displayName: 'Claude Sonnet 4.6 (Thinking)', multiplier: 1.3, variant: 'thinking' },
   { id: 'claude-sonnet-4-6-agentic', displayName: 'Claude Sonnet 4.6 (Agentic)', multiplier: 1.3, variant: 'agentic' },

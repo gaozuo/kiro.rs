@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **新增 Claude Sonnet 5 模型支持** — `/v1/models` 和 Admin UI 暴露 `claude-sonnet-5`、`claude-sonnet-5-thinking`、`claude-sonnet-5-agentic`；Anthropic→Kiro 模型映射支持 `sonnet-5`，上下文窗口按 1M 处理，`claude-sonnet-5-thinking` 使用 adaptive thinking + `output_config.effort = high`，并补充 Sonnet 5 使用说明 (`src/anthropic/handlers.rs`, `src/anthropic/converter.rs`, `src/anthropic/types.rs`, `admin-ui/src/components/available-models-dialog.tsx`, `docs/claude-sonnet-5.md`, `README.md`)
+
 ## [v1.1.37] - 2026-05-29
 
 ### Fixed

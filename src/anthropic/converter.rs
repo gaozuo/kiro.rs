@@ -181,6 +181,7 @@ fn count_images_in_content(content: &serde_json::Value) -> usize {
 /// Kiro 上游使用的规范模型 ID
 const KIRO_MODEL_SONNET_4_5: &str = "claude-sonnet-4.5";
 const KIRO_MODEL_SONNET_4_6: &str = "claude-sonnet-4.6";
+const KIRO_MODEL_SONNET_5: &str = "claude-sonnet-5";
 const KIRO_MODEL_OPUS_4_5: &str = "claude-opus-4.5";
 const KIRO_MODEL_OPUS_4_6: &str = "claude-opus-4.6";
 const KIRO_MODEL_OPUS_4_7: &str = "claude-opus-4.7";
@@ -197,7 +198,7 @@ fn normalize_model_name(model: &str) -> String {
 /// 模型映射：将 Anthropic 模型名映射到 Kiro 模型 ID
 ///
 /// 映射规则：
-/// - sonnet 且包含 4.6/4-6 → claude-sonnet-4.6，否则 → claude-sonnet-4.5
+/// - sonnet 且包含 sonnet-5 → claude-sonnet-5，包含 4.6/4-6 → claude-sonnet-4.6，否则 → claude-sonnet-4.5
 /// - opus 且包含 4.5/4-5 → claude-opus-4.5，包含 4.7/4-7 → claude-opus-4.7，
 ///   包含 4.8/4-8 → claude-opus-4.8，否则 → claude-opus-4.6
 /// - 所有 haiku → claude-haiku-4.5
@@ -206,7 +207,9 @@ pub fn map_model(model: &str) -> Option<String> {
     let normalized_model = normalize_model_name(model);
 
     if normalized_model.contains("sonnet") {
-        if normalized_model.contains("4-6") || normalized_model.contains("4.6") {
+        if normalized_model.contains("sonnet-5") {
+            Some(KIRO_MODEL_SONNET_5.to_string())
+        } else if normalized_model.contains("4-6") || normalized_model.contains("4.6") {
             Some(KIRO_MODEL_SONNET_4_6.to_string())
         } else {
             Some(KIRO_MODEL_SONNET_4_5.to_string())
@@ -1601,6 +1604,15 @@ mod tests {
             map_model("claude-sonnet-4.6").unwrap(),
             KIRO_MODEL_SONNET_4_6
         );
+        assert_eq!(map_model("claude-sonnet-5").unwrap(), KIRO_MODEL_SONNET_5);
+        assert_eq!(
+            map_model("claude-sonnet-5-thinking").unwrap(),
+            KIRO_MODEL_SONNET_5
+        );
+        assert_eq!(
+            map_model("claude-sonnet-4-5-20250929").unwrap(),
+            KIRO_MODEL_SONNET_4_5
+        );
     }
 
     #[test]
@@ -1705,6 +1717,9 @@ mod tests {
     #[test]
     fn test_map_model_versioned_entries_from_models_endpoint() {
         let supported_models = [
+            ("claude-sonnet-5", KIRO_MODEL_SONNET_5),
+            ("claude-sonnet-5-thinking", KIRO_MODEL_SONNET_5),
+            ("claude-sonnet-5-agentic", KIRO_MODEL_SONNET_5),
             ("claude-sonnet-4-6", KIRO_MODEL_SONNET_4_6),
             ("claude-sonnet-4-6-thinking", KIRO_MODEL_SONNET_4_6),
             ("claude-sonnet-4-6-agentic", KIRO_MODEL_SONNET_4_6),
