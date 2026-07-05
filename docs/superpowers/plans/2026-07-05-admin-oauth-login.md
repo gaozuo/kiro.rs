@@ -134,6 +134,32 @@ mod tests {
         assert!(session.code_verifier.is_none());
     }
 
+    fn test_session() -> OAuthSession {
+        OAuthSession {
+            session_id: "session-1".to_string(),
+            provider: OAuthProvider::Google,
+            auth_method: AuthMethod::Social,
+            state: "state-1".to_string(),
+            code_verifier: Some("verifier-1".to_string()),
+            redirect_uri: SOCIAL_REDIRECT_URI.to_string(),
+            region: "us-east-1".to_string(),
+            start_url: None,
+            client_id: None,
+            client_secret: None,
+            machine_id: "machine-1".to_string(),
+            priority: 0,
+            endpoint: None,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+            created_at: Utc::now(),
+            expires_at: session_expiry(Utc::now()),
+            state_kind: OAuthSessionState::Pending,
+            credential_id: None,
+            error: None,
+        }
+    }
+
     #[test]
     fn callback_parser_rejects_missing_code() {
         let err = parse_callback_input(
@@ -1696,8 +1722,6 @@ export interface OAuthStartResponse {
 export interface OAuthCompleteRequest {
   sessionId: string
   callbackUrl?: string | null
-  code?: string | null
-  state?: string | null
 }
 
 export interface OAuthCompleteResponse {
