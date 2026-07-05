@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use anyhow::bail;
@@ -171,6 +173,21 @@ impl OAuthSession {
         now >= self.expires_at
     }
 
+    pub fn clear_sensitive_fields(&mut self) {
+        self.state.clear();
+        self.code_verifier = None;
+        self.client_secret = None;
+        self.proxy_username = None;
+        self.proxy_password = None;
+    }
+
+    pub fn mark_completed(&mut self, credential_id: u64) {
+        self.state_kind = OAuthSessionState::Completed;
+        self.credential_id = Some(credential_id);
+        self.error = None;
+        self.clear_sensitive_fields();
+    }
+
     pub fn sanitized_status(&self, now: DateTime<Utc>) -> OAuthStatusResponse {
         let state = if self.is_expired(now) && self.state_kind == OAuthSessionState::Pending {
             OAuthSessionState::Expired
@@ -211,7 +228,17 @@ impl OAuthSessionStore {
         self.sessions.lock().get(session_id).cloned()
     }
 
-    pub fn update(&self, session: OAuthSession) {
+    pub fn update(&self, mut session: OAuthSession) {
+        self.prune_expired();
+        if matches!(
+            session.state_kind,
+            OAuthSessionState::Completed
+                | OAuthSessionState::Failed
+                | OAuthSessionState::Cancelled
+                | OAuthSessionState::Expired
+        ) {
+            session.clear_sensitive_fields();
+        }
         self.sessions
             .lock()
             .insert(session.session_id.clone(), session);
@@ -223,15 +250,9 @@ impl OAuthSessionStore {
 
     fn prune_expired(&self) {
         let now = Utc::now();
-        self.sessions.lock().retain(|_, session| {
-            !(session.is_expired(now)
-                && matches!(
-                    session.state_kind,
-                    OAuthSessionState::Pending
-                        | OAuthSessionState::Failed
-                        | OAuthSessionState::Cancelled
-                ))
-        });
+        self.sessions
+            .lock()
+            .retain(|_, session| !session.is_expired(now));
     }
 }
 
@@ -397,5 +418,79 @@ mod tests {
         assert!(url.contains("redirect_uri=kiro%3A%2F%2Fkiro.kiroAgent%2Fauthenticate-success"));
         assert!(url.contains("code_challenge=challenge"));
         assert!(url.contains("state=state"));
+    }
+
+    #[test]
+    fn completed_session_clears_sensitive_fields() {
+        let mut session = test_session();
+        session.client_secret = Some("client-secret".to_string());
+        session.proxy_username = Some("proxy-user".to_string());
+        session.proxy_password = Some("proxy-pass".to_string());
+
+        session.mark_completed(42);
+
+        assert_eq!(session.state_kind, OAuthSessionState::Completed);
+        assert_eq!(session.credential_id, Some(42));
+        assert!(session.state.is_empty());
+        assert!(session.code_verifier.is_none());
+        assert!(session.client_secret.is_none());
+        assert!(session.proxy_username.is_none());
+        assert!(session.proxy_password.is_none());
+    }
+
+    #[test]
+    fn session_store_prunes_expired_completed_sessions() {
+        let store = OAuthSessionStore::new();
+        let mut session = test_session();
+        session.expires_at = Utc::now() - Duration::seconds(1);
+        session.mark_completed(7);
+        let id = session.session_id.clone();
+
+        store.update(session);
+
+        assert!(store.get(&id).is_none());
+    }
+
+    #[test]
+    fn idc_authorize_url_matches_kiro_scopes_parameter() {
+        let url = build_idc_authorize_url(
+            "us-east-1",
+            "client",
+            "http://127.0.0.1:49152/oauth/callback",
+            "challenge",
+            "state",
+        );
+
+        assert!(url.contains("/authorize?response_type=code"));
+        assert!(url.contains("client_id=client"));
+        assert!(url.contains("scopes=codewhisperer%3Acompletions%2Ccodewhisperer%3Aanalysis"));
+        assert!(!url.contains("&scope="));
+        assert!(url.contains("code_challenge=challenge"));
+    }
+
+    fn test_session() -> OAuthSession {
+        OAuthSession {
+            session_id: "session-1".to_string(),
+            provider: OAuthProvider::Google,
+            auth_method: AuthMethod::Social,
+            state: "state-1".to_string(),
+            code_verifier: Some("verifier-1".to_string()),
+            redirect_uri: SOCIAL_REDIRECT_URI.to_string(),
+            region: "us-east-1".to_string(),
+            start_url: None,
+            client_id: None,
+            client_secret: None,
+            machine_id: "machine-1".to_string(),
+            priority: 0,
+            endpoint: None,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+            created_at: Utc::now(),
+            expires_at: session_expiry(Utc::now()),
+            state_kind: OAuthSessionState::Pending,
+            credential_id: None,
+            error: None,
+        }
     }
 }
