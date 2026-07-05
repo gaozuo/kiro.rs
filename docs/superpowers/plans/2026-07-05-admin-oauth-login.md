@@ -105,6 +105,12 @@ mod tests {
     }
 
     #[test]
+    fn callback_parser_rejects_raw_query_string() {
+        let err = parse_callback_input("code=abc&state=state-1").unwrap_err();
+        assert!(err.to_string().contains("完整 callback URL"));
+    }
+
+    #[test]
     fn callback_parser_rejects_missing_code() {
         let err = parse_callback_input(
             "kiro://kiro.kiroAgent/authenticate-success?state=state-1",
@@ -436,14 +442,9 @@ pub fn parse_callback_input(input: &str) -> anyhow::Result<ParsedCallback> {
         bail!("回调 URL 为空");
     }
 
-    let query = if let Ok(url) = url::Url::parse(trimmed) {
-        url.query().unwrap_or("").to_string()
-    } else {
-        trimmed
-            .split_once('?')
-            .map(|(_, query)| query.to_string())
-            .unwrap_or_else(|| trimmed.to_string())
-    };
+    let url = url::Url::parse(trimmed)
+        .map_err(|_| anyhow::anyhow!("请粘贴完整 callback URL"))?;
+    let query = url.query().unwrap_or("").to_string();
 
     let params: HashMap<String, String> =
         url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
@@ -1296,17 +1297,6 @@ fn fail_oauth_session(
     error
 }
 
-fn expire_oauth_session(&self, mut session: OAuthSession) -> AdminServiceError {
-    let error = AdminServiceError::InvalidCredential(
-        "登录会话已过期，请重新开始".to_string(),
-    );
-    session.state_kind = OAuthSessionState::Expired;
-    session.error = Some(error.to_string());
-    session.expires_at = session_expiry(Utc::now());
-    self.oauth_sessions.update(session);
-    error
-}
-
 pub async fn complete_oauth_login(
     &self,
     req: OAuthCompleteRequest,
@@ -1315,7 +1305,9 @@ pub async fn complete_oauth_login(
         AdminServiceError::InvalidCredential("登录会话已过期，请重新开始".to_string())
     })?;
     if session.is_expired(Utc::now()) {
-        return Err(self.expire_oauth_session(session));
+        return Err(AdminServiceError::InvalidCredential(
+            "登录会话已过期，请重新开始".to_string(),
+        ));
     }
 
     let callback_url = match req

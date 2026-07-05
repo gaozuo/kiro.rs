@@ -335,14 +335,9 @@ pub fn parse_callback_input(input: &str) -> anyhow::Result<ParsedCallback> {
         bail!("回调 URL 为空");
     }
 
-    let query = if let Ok(url) = url::Url::parse(trimmed) {
-        url.query().unwrap_or("").to_string()
-    } else {
-        trimmed
-            .split_once('?')
-            .map(|(_, query)| query.to_string())
-            .unwrap_or_else(|| trimmed.to_string())
-    };
+    let url =
+        url::Url::parse(trimmed).map_err(|_| anyhow::anyhow!("请粘贴完整 callback URL"))?;
+    let query = url.query().unwrap_or("").to_string();
 
     let params: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
         .into_owned()
@@ -675,6 +670,15 @@ mod tests {
         .expect("callback should parse");
         assert_eq!(parsed.code, "idc-code");
         assert_eq!(parsed.state, "idc-state");
+    }
+
+    #[test]
+    fn callback_parser_rejects_raw_query_string() {
+        let err = match parse_callback_input("code=abc&state=state-1") {
+            Ok(_) => panic!("raw query string should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("完整 callback URL"));
     }
 
     #[test]

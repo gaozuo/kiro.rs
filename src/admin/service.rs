@@ -270,16 +270,6 @@ impl AdminService {
         error
     }
 
-    fn expire_oauth_session(&self, mut session: OAuthSession) -> AdminServiceError {
-        let error =
-            AdminServiceError::InvalidCredential("登录会话已过期，请重新开始".to_string());
-        session.state_kind = OAuthSessionState::Expired;
-        session.error = Some(error.to_string());
-        session.expires_at = session_expiry(Utc::now());
-        self.oauth_sessions.update(session);
-        error
-    }
-
     /// 设置凭据级 Web Portal Idp
     pub fn set_idp(&self, id: u64, idp: Option<String>) -> Result<(), AdminServiceError> {
         self.token_manager
@@ -656,7 +646,9 @@ impl AdminService {
             AdminServiceError::InvalidCredential("登录会话已过期，请重新开始".to_string())
         })?;
         if session.is_expired(Utc::now()) {
-            return Err(self.expire_oauth_session(session));
+            return Err(AdminServiceError::InvalidCredential(
+                "登录会话已过期，请重新开始".to_string(),
+            ));
         }
 
         let callback_url = match req
@@ -1800,7 +1792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_complete_expired_session_records_expired_status() {
+    async fn oauth_complete_expired_session_is_removed() {
         let service = create_test_service();
         let response = service
             .start_oauth_login(crate::admin::oauth::OAuthStartRequest {
@@ -1834,14 +1826,8 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        let status = service
-            .oauth_status(&response.session_id)
-            .expect("expired status should be retained");
-        assert_eq!(
-            status.state,
-            crate::admin::oauth::OAuthSessionState::Expired
-        );
-        assert!(status.error.unwrap_or_default().contains("登录会话已过期"));
+        assert!(result.unwrap_err().to_string().contains("登录会话已过期"));
+        assert!(service.oauth_status(&response.session_id).is_err());
     }
 
     #[test]
