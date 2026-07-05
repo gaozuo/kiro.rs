@@ -37,6 +37,19 @@ const PROVIDERS: Array<{
   { id: 'Enterprise', label: 'Enterprise', authMethod: 'idc' },
 ]
 
+function isValidEnterpriseStartUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.hostname.length > 0 &&
+      (parsed.pathname === '/start' || parsed.pathname.endsWith('/start'))
+    )
+  } catch {
+    return false
+  }
+}
+
 export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) {
   const [provider, setProvider] = useState<OAuthProvider>(DEFAULT_PROVIDER)
   const [region, setRegion] = useState(DEFAULT_REGION)
@@ -68,10 +81,12 @@ export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) 
   }
 
   const handleClose = (options?: { completed?: boolean }) => {
+    if (isBusy && !options?.completed) {
+      return
+    }
+
     const activeSessionId = session?.sessionId
-    const shouldCancel = Boolean(
-      activeSessionId && !options?.completed
-    )
+    const shouldCancel = Boolean(activeSessionId && !options?.completed)
 
     if (shouldCancel && activeSessionId) {
       cancelOAuth.mutate(activeSessionId, {
@@ -86,6 +101,10 @@ export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) 
   }
 
   const handleDialogOpenChange = (nextOpen: boolean) => {
+    if (isBusy) {
+      return
+    }
+
     if (nextOpen) {
       onOpenChange(true)
       return
@@ -110,8 +129,8 @@ export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) 
       return
     }
 
-    if (isEnterprise && !/^https:\/\//i.test(startUrl.trim())) {
-      toast.error('Enterprise Start URL 必须以 https:// 开头')
+    if (isEnterprise && !isValidEnterpriseStartUrl(startUrl.trim())) {
+      toast.error('Enterprise Start URL 必须是 https 链接，且路径为 /start 或以 /start 结尾')
       return
     }
 
@@ -186,7 +205,7 @@ export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) 
         <div className="space-y-4 py-4 overflow-y-auto pr-1">
           <div className="space-y-2">
             <label className="text-sm font-medium">Provider</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {PROVIDERS.map((item) => (
                 <Button
                   key={item.id}
@@ -204,7 +223,7 @@ export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) 
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div className="space-y-2">
               <label htmlFor="oauth-region" className="text-sm font-medium">
                 Region
