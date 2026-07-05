@@ -234,17 +234,19 @@ impl AdminService {
                         "Enterprise Start URL 必须以 https:// 开头".to_string(),
                     ));
                 }
-                let parsed = url::Url::parse(&value).map_err(|_| {
+                let mut parsed = url::Url::parse(&value).map_err(|_| {
                     AdminServiceError::InvalidCredential(
                         "Enterprise Start URL 格式无效".to_string(),
                     )
                 })?;
-                if parsed.host_str().is_none() || parsed.path() != "/start" {
+                let normalized_path = parsed.path().trim_end_matches('/');
+                if parsed.host_str().is_none() || normalized_path != "/start" {
                     return Err(AdminServiceError::InvalidCredential(
                         "Enterprise Start URL 路径必须为 /start".to_string(),
                     ));
                 }
-                Ok(Some(value))
+                parsed.set_path("/start");
+                Ok(Some(parsed.to_string()))
             }
             OAuthProvider::Google | OAuthProvider::Github => Ok(None),
         }
@@ -1023,7 +1025,7 @@ impl AdminService {
     }
 
     fn extract_http_status(msg: &str) -> Option<u16> {
-        let rest = msg.split("HTTP ").nth(1)?;
+        let rest = msg.split("HTTP ").last()?;
         let status = rest
             .chars()
             .take_while(|ch| ch.is_ascii_digit())
@@ -1748,6 +1750,20 @@ mod tests {
     }
 
     #[test]
+    fn oauth_enterprise_start_url_normalizes_trailing_slash() {
+        let result = AdminService::normalize_oauth_start_url(
+            crate::admin::oauth::OAuthProvider::Enterprise,
+            Some("https://d-1234567890.awsapps.com/start/".to_string()),
+        )
+        .expect("start URL with trailing slash should normalize");
+
+        assert_eq!(
+            result.as_deref(),
+            Some("https://d-1234567890.awsapps.com/start")
+        );
+    }
+
+    #[test]
     fn oauth_enterprise_start_url_rejects_nested_start_path() {
         let result = AdminService::normalize_oauth_start_url(
             crate::admin::oauth::OAuthProvider::Enterprise,
@@ -1771,6 +1787,16 @@ mod tests {
     fn oauth_http_5xx_errors_are_upstream_errors() {
         let error = AdminService::classify_oauth_error(anyhow::anyhow!(
             "AWS SSO client 注册失败，请检查 region/startUrl (HTTP 503 Service Unavailable)"
+        ));
+
+        assert!(matches!(error, AdminServiceError::UpstreamError(_)));
+        assert_eq!(error.status_code(), axum::http::StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn oauth_http_status_parser_uses_last_http_marker() {
+        let error = AdminService::classify_oauth_error(anyhow::anyhow!(
+            "upstream HTTP transport wrapped error: Token 交换失败，请重新授权 (HTTP 502 Bad Gateway)"
         ));
 
         assert!(matches!(error, AdminServiceError::UpstreamError(_)));

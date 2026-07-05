@@ -43,7 +43,7 @@ function isValidEnterpriseStartUrl(value: string): boolean {
     return (
       parsed.protocol === 'https:' &&
       parsed.hostname.length > 0 &&
-      parsed.pathname === '/start'
+      parsed.pathname.replace(/\/+$/, '') === '/start'
     )
   } catch {
     return false
