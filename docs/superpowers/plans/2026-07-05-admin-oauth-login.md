@@ -22,6 +22,7 @@
 - Existing token manager validation, refresh, usage lookup, model availability, and persistence paths are reused.
 - Do not implement a public OAuth callback service.
 - Do not require DNS, HTTPS, or reverse proxy configuration.
+- This workspace has no Rust toolchain on the host and this crate has no `lib` target; backend verification commands use `docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test ...` without `--lib`.
 
 ---
 
@@ -130,7 +131,7 @@ mod tests {
 Run:
 
 ```bash
-cargo test admin::oauth --lib
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test admin::oauth
 ```
 
 Expected: FAIL because the module functions and types do not exist.
@@ -312,6 +313,23 @@ impl OAuthSession {
         now >= self.expires_at
     }
 
+    pub fn scrub_terminal_secrets(&mut self) {
+        if matches!(
+            self.state_kind,
+            OAuthSessionState::Completed
+                | OAuthSessionState::Failed
+                | OAuthSessionState::Cancelled
+                | OAuthSessionState::Expired
+        ) {
+            self.state.clear();
+            self.code_verifier = None;
+            self.redirect_uri.clear();
+            self.start_url = None;
+            self.client_secret = None;
+            self.proxy_password = None;
+        }
+    }
+
     pub fn sanitized_status(&self, now: DateTime<Utc>) -> OAuthStatusResponse {
         let state = if self.is_expired(now) && self.state_kind == OAuthSessionState::Pending {
             OAuthSessionState::Expired
@@ -340,8 +358,9 @@ impl OAuthSessionStore {
         Self::default()
     }
 
-    pub fn insert(&self, session: OAuthSession) {
+    pub fn insert(&self, mut session: OAuthSession) {
         self.prune_expired();
+        session.scrub_terminal_secrets();
         self.sessions
             .lock()
             .insert(session.session_id.clone(), session);
@@ -352,7 +371,8 @@ impl OAuthSessionStore {
         self.sessions.lock().get(session_id).cloned()
     }
 
-    pub fn update(&self, session: OAuthSession) {
+    pub fn update(&self, mut session: OAuthSession) {
+        session.scrub_terminal_secrets();
         self.sessions
             .lock()
             .insert(session.session_id.clone(), session);
@@ -501,7 +521,7 @@ pub mod oauth;
 Run:
 
 ```bash
-cargo test admin::oauth --lib
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test admin::oauth
 ```
 
 Expected: PASS for the PKCE, callback parser, and URL-builder tests.
@@ -623,7 +643,8 @@ fn idc_mapper_sets_refresh_fields() {
 Run:
 
 ```bash
-cargo test admin::oauth::tests::social_mapper_preserves_provider_identity admin::oauth::tests::idc_mapper_sets_refresh_fields --lib
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test social_mapper_preserves_provider_identity
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test idc_mapper_sets_refresh_fields
 ```
 
 Expected: FAIL because exchange response structs and mapper functions do not exist.
@@ -787,11 +808,11 @@ pub async fn exchange_social_token(
         .context("Social token exchange request failed")?;
 
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("Token 交换失败，请重新授权: {} {}", status, text);
+        bail!("Token 交换失败，请重新授权 (HTTP {})", status.as_u16());
     }
 
+    let text = resp.text().await.unwrap_or_default();
     serde_json::from_str(&text).context("Social token exchange response parse failed")
 }
 ```
@@ -828,11 +849,14 @@ pub async fn register_idc_client(
         .context("AWS SSO client registration request failed")?;
 
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("AWS SSO client 注册失败，请检查 region/startUrl: {} {}", status, text);
+        bail!(
+            "AWS SSO client 注册失败，请检查 region/startUrl (HTTP {})",
+            status.as_u16()
+        );
     }
 
+    let text = resp.text().await.unwrap_or_default();
     serde_json::from_str(&text).context("AWS SSO client registration parse failed")
 }
 
@@ -866,11 +890,11 @@ pub async fn exchange_idc_token(
         .context("AWS SSO token exchange request failed")?;
 
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("Token 交换失败，请重新授权: {} {}", status, text);
+        bail!("Token 交换失败，请重新授权 (HTTP {})", status.as_u16());
     }
 
+    let text = resp.text().await.unwrap_or_default();
     serde_json::from_str(&text).context("AWS SSO token exchange parse failed")
 }
 ```
@@ -880,7 +904,7 @@ pub async fn exchange_idc_token(
 Run:
 
 ```bash
-cargo test admin::oauth --lib
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test admin::oauth
 ```
 
 Expected: PASS for pure OAuth tests. No external OAuth request is made by these unit tests.
@@ -981,12 +1005,46 @@ async fn oauth_cancel_removes_session() {
         .expect("cancel should succeed");
     assert!(service.oauth_status(&response.session_id).is_err());
 }
+
+#[tokio::test]
+async fn oauth_complete_wrong_state_records_failed_status() {
+    let service = create_test_service();
+    let response = service.start_oauth_login(
+        crate::admin::oauth::OAuthStartRequest {
+            provider: crate::admin::oauth::OAuthProvider::Google,
+            region: Some("us-east-1".to_string()),
+            start_url: None,
+            priority: 0,
+            endpoint: None,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+        },
+    ).await
+    .expect("start should succeed");
+
+    let result = service.complete_oauth_login(crate::admin::oauth::OAuthCompleteRequest {
+        session_id: response.session_id.clone(),
+        callback_url: Some(
+            "kiro://kiro.kiroAgent/authenticate-success?code=abc&state=wrong".to_string(),
+        ),
+        code: None,
+        state: None,
+    }).await;
+
+    assert!(result.is_err());
+    let status = service
+        .oauth_status(&response.session_id)
+        .expect("failed session should remain visible");
+    assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
+    assert!(status.error.unwrap_or_default().contains("state 不匹配"));
+}
 ```
 
 Run:
 
 ```bash
-cargo test oauth_start --lib
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_start
 ```
 
 Expected: FAIL because the service methods and test helper changes do not exist.
@@ -1201,6 +1259,17 @@ pub fn cancel_oauth_login(&self, session_id: &str) -> Result<(), AdminServiceErr
 Add:
 
 ```rust
+fn fail_oauth_session(
+    &self,
+    mut session: OAuthSession,
+    error: AdminServiceError,
+) -> AdminServiceError {
+    session.state_kind = OAuthSessionState::Failed;
+    session.error = Some(error.to_string());
+    self.oauth_sessions.update(session);
+    error
+}
+
 pub async fn complete_oauth_login(
     &self,
     req: OAuthCompleteRequest,
@@ -1209,12 +1278,13 @@ pub async fn complete_oauth_login(
         AdminServiceError::InvalidCredential("登录会话已过期，请重新开始".to_string())
     })?;
     if session.is_expired(Utc::now()) {
-        return Err(AdminServiceError::InvalidCredential(
+        let error = AdminServiceError::InvalidCredential(
             "登录会话已过期，请重新开始".to_string(),
-        ));
+        );
+        return Err(self.fail_oauth_session(session, error));
     }
 
-    let parsed = if let Some(callback_url) = req.callback_url.as_deref() {
+    let parsed_result = if let Some(callback_url) = req.callback_url.as_deref() {
         parse_callback_input(callback_url)
     } else {
         let code = req
@@ -1233,24 +1303,37 @@ pub async fn complete_oauth_login(
             code: code.to_string(),
             state: state.to_string(),
         })
-    }
-    .map_err(|e| AdminServiceError::InvalidCredential(e.to_string()))?;
+    };
+    let parsed = match parsed_result {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            let error = AdminServiceError::InvalidCredential(e.to_string());
+            return Err(self.fail_oauth_session(session, error));
+        }
+    };
 
     if parsed.state != session.state {
-        return Err(AdminServiceError::InvalidCredential(
+        let error = AdminServiceError::InvalidCredential(
             "state 不匹配，请重新开始登录".to_string(),
-        ));
+        );
+        return Err(self.fail_oauth_session(session, error));
     }
 
-    let code_verifier = session.code_verifier.take().ok_or_else(|| {
-        AdminServiceError::InvalidCredential("登录会话已完成或无效".to_string())
-    })?;
+    let code_verifier = match session.code_verifier.take() {
+        Some(code_verifier) => code_verifier,
+        None => {
+            let error = AdminServiceError::InvalidCredential(
+                "登录会话已完成或无效".to_string(),
+            );
+            return Err(self.fail_oauth_session(session, error));
+        }
+    };
     let config = self.config.read().clone();
     let proxy = self.token_manager.global_proxy();
 
     let credential = match session.auth_method {
         AuthMethod::Social => {
-            let token = exchange_social_token(
+            let token = match exchange_social_token(
                 &parsed.code,
                 &code_verifier,
                 &session.redirect_uri,
@@ -1259,17 +1342,35 @@ pub async fn complete_oauth_login(
                 proxy.as_ref(),
             )
             .await
-            .map_err(|e| self.classify_add_error(e))?;
+            {
+                Ok(token) => token,
+                Err(e) => {
+                    let error = self.classify_add_error(e);
+                    return Err(self.fail_oauth_session(session, error));
+                }
+            };
             map_social_credentials(&session, token)
         }
         AuthMethod::Idc => {
-            let client_id = session.client_id.clone().ok_or_else(|| {
-                AdminServiceError::InvalidCredential("IdC session missing clientId".to_string())
-            })?;
-            let client_secret = session.client_secret.clone().ok_or_else(|| {
-                AdminServiceError::InvalidCredential("IdC session missing clientSecret".to_string())
-            })?;
-            let token = exchange_idc_token(
+            let client_id = match session.client_id.clone() {
+                Some(client_id) => client_id,
+                None => {
+                    let error = AdminServiceError::InvalidCredential(
+                        "IdC session missing clientId".to_string(),
+                    );
+                    return Err(self.fail_oauth_session(session, error));
+                }
+            };
+            let client_secret = match session.client_secret.clone() {
+                Some(client_secret) => client_secret,
+                None => {
+                    let error = AdminServiceError::InvalidCredential(
+                        "IdC session missing clientSecret".to_string(),
+                    );
+                    return Err(self.fail_oauth_session(session, error));
+                }
+            };
+            let token = match exchange_idc_token(
                 &session.region,
                 &client_id,
                 &client_secret,
@@ -1280,16 +1381,34 @@ pub async fn complete_oauth_login(
                 proxy.as_ref(),
             )
             .await
-            .map_err(|e| self.classify_add_error(e))?;
-            map_idc_credentials(&session, token).map_err(|e| self.classify_add_error(e))?
+            {
+                Ok(token) => token,
+                Err(e) => {
+                    let error = self.classify_add_error(e);
+                    return Err(self.fail_oauth_session(session, error));
+                }
+            };
+            match map_idc_credentials(&session, token) {
+                Ok(credential) => credential,
+                Err(e) => {
+                    let error = self.classify_add_error(e);
+                    return Err(self.fail_oauth_session(session, error));
+                }
+            }
         }
     };
 
-    let credential_id = self
+    let credential_id = match self
         .token_manager
         .add_credential(credential)
         .await
-        .map_err(|e| self.classify_add_error(e))?;
+    {
+        Ok(credential_id) => credential_id,
+        Err(e) => {
+            let error = self.classify_add_error(e);
+            return Err(self.fail_oauth_session(session, error));
+        }
+    };
 
     if let Err(e) = self.token_manager.get_usage_limits_for(credential_id).await {
         tracing::warn!("OAuth 添加凭据后获取订阅等级失败（不影响凭据添加）: {}", e);
@@ -1331,10 +1450,12 @@ pub async fn complete_oauth_login(
 Run:
 
 ```bash
-cargo test oauth_start oauth_cancel --lib
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_start
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_cancel
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_complete_wrong_state_records_failed_status
 ```
 
-Expected: PASS for start/status/cancel tests. Complete is covered by pure mapper tests and will get route-level coverage in the next task.
+Expected: PASS for start/status/cancel tests and for the failed-session status retention test. Complete success mapping is covered by pure mapper tests and route-level wiring is covered in the next task.
 
 - [ ] **Step 8: Commit Task 3**
 
@@ -1437,9 +1558,11 @@ Add routes before `.layer(...)`:
 Run:
 
 ```bash
-cargo fmt
-cargo test admin::oauth --lib
-cargo test oauth_start oauth_cancel --lib
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test admin::oauth
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_start
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_cancel
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_complete_wrong_state_records_failed_status
+git diff --check
 ```
 
 Expected: PASS.
@@ -1992,7 +2115,7 @@ git commit -m "feat: wire oauth login into admin ui"
 Run:
 
 ```bash
-cargo test
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test
 ```
 
 Expected: all tests pass.
