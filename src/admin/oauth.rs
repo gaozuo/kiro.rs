@@ -178,6 +178,16 @@ impl OAuthSession {
         now >= self.expires_at
     }
 
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.state_kind,
+            OAuthSessionState::Completed
+                | OAuthSessionState::Failed
+                | OAuthSessionState::Cancelled
+                | OAuthSessionState::Expired
+        )
+    }
+
     pub fn clear_sensitive_fields(&mut self) {
         self.state.clear();
         self.code_verifier = None;
@@ -229,10 +239,13 @@ impl OAuthSessionStore {
         Self::default()
     }
 
-    pub fn insert(&self, session: OAuthSession) {
+    pub fn insert(&self, mut session: OAuthSession) {
         self.prune_expired();
         if session.is_expired(Utc::now()) {
             return;
+        }
+        if session.is_terminal() {
+            session.clear_sensitive_fields();
         }
         self.sessions
             .lock()
@@ -250,13 +263,7 @@ impl OAuthSessionStore {
             self.sessions.lock().remove(&session.session_id);
             return;
         }
-        if matches!(
-            session.state_kind,
-            OAuthSessionState::Completed
-                | OAuthSessionState::Failed
-                | OAuthSessionState::Cancelled
-                | OAuthSessionState::Expired
-        ) {
+        if session.is_terminal() {
             session.clear_sensitive_fields();
         }
         self.sessions
@@ -494,6 +501,25 @@ mod tests {
         store.insert(session);
 
         assert!(store.sessions.lock().get(&id).is_none());
+    }
+
+    #[test]
+    fn session_store_scrubs_terminal_sessions_on_insert() {
+        let store = OAuthSessionStore::new();
+        let mut session = test_session();
+        session.state_kind = OAuthSessionState::Completed;
+        session.credential_id = Some(12);
+        let id = session.session_id.clone();
+
+        store.insert(session);
+
+        let stored = store.sessions.lock().get(&id).cloned().unwrap();
+        assert_eq!(stored.state_kind, OAuthSessionState::Completed);
+        assert_eq!(stored.credential_id, Some(12));
+        assert!(stored.state.is_empty());
+        assert!(stored.code_verifier.is_none());
+        assert!(stored.redirect_uri.is_empty());
+        assert!(stored.machine_id.is_empty());
     }
 
     #[test]
