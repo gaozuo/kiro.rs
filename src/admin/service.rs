@@ -606,9 +606,9 @@ impl AdminService {
                 let start_url = start_url.as_deref().ok_or_else(|| {
                     AdminServiceError::InvalidCredential("IdC 缺少 Start URL".to_string())
                 })?;
-                let registration = register_idc_client(&region, start_url, &config, proxy.as_ref())
-                    .await
-                    .map_err(|e| self.classify_add_error(e))?;
+            let registration = register_idc_client(&region, start_url, &config, proxy.as_ref())
+                .await
+                .map_err(Self::classify_oauth_error)?;
                 let redirect_uri = idc_callback_redirect_uri();
                 let auth_url = build_idc_authorize_url(
                     &region,
@@ -730,7 +730,7 @@ impl AdminService {
                 .await {
                     Ok(token) => token,
                     Err(e) => {
-                        let error = self.classify_add_error(e);
+                        let error = Self::classify_oauth_error(e);
                         return Err(self.fail_oauth_session(session, error));
                     }
                 };
@@ -768,7 +768,7 @@ impl AdminService {
                 .await {
                     Ok(token) => token,
                     Err(e) => {
-                        let error = self.classify_add_error(e);
+                        let error = Self::classify_oauth_error(e);
                         return Err(self.fail_oauth_session(session, error));
                     }
                 };
@@ -996,6 +996,41 @@ impl AdminService {
         } else {
             AdminServiceError::InternalError(msg)
         }
+    }
+
+    fn classify_oauth_error(e: anyhow::Error) -> AdminServiceError {
+        let msg = e.to_string();
+        let status = Self::extract_http_status(&msg);
+
+        if matches!(status, Some(400..=499)) {
+            return AdminServiceError::InvalidCredential(msg);
+        }
+
+        if status.is_some()
+            || msg.contains("token exchange")
+            || msg.contains("Token 交换失败")
+            || msg.contains("client registration")
+            || msg.contains("client 注册失败")
+            || msg.contains("response parse failed")
+            || msg.contains("request failed")
+            || msg.contains("error trying to connect")
+            || msg.contains("connection")
+            || msg.contains("timeout")
+            || msg.contains("timed out")
+        {
+            return AdminServiceError::UpstreamError(msg);
+        }
+
+        AdminServiceError::InternalError(msg)
+    }
+
+    fn extract_http_status(msg: &str) -> Option<u16> {
+        let rest = msg.split("HTTP ").nth(1)?;
+        let status = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        status.parse().ok()
     }
 
     /// 分类删除凭据错误
@@ -1712,6 +1747,25 @@ mod tests {
             result.as_deref(),
             Some("https://d-1234567890.awsapps.com/start")
         );
+    }
+
+    #[test]
+    fn oauth_http_4xx_errors_are_not_internal_errors() {
+        let error =
+            AdminService::classify_oauth_error(anyhow::anyhow!("Token 交换失败，请重新授权 (HTTP 400 Bad Request)"));
+
+        assert!(matches!(error, AdminServiceError::InvalidCredential(_)));
+        assert_eq!(error.status_code(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn oauth_http_5xx_errors_are_upstream_errors() {
+        let error = AdminService::classify_oauth_error(anyhow::anyhow!(
+            "AWS SSO client 注册失败，请检查 region/startUrl (HTTP 503 Service Unavailable)"
+        ));
+
+        assert!(matches!(error, AdminServiceError::UpstreamError(_)));
+        assert_eq!(error.status_code(), axum::http::StatusCode::BAD_GATEWAY);
     }
 
     #[tokio::test]
