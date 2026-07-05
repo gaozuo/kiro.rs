@@ -442,3 +442,50 @@ export interface UpdateGlobalConfigRequest {
   defaultEndpoint?: string
   compression?: UpdateCompressionConfigRequest
 }
+
+export type OAuthProvider = 'Google' | 'Github' | 'BuilderId' | 'Enterprise'
+export type OAuthAuthMethod = 'social' | 'idc'
+export type OAuthSessionState = 'pending' | 'completed' | 'failed' | 'cancelled' | 'expired'
+
+export interface OAuthStartRequest {
+  provider: OAuthProvider
+  region?: string | null
+  startUrl?: string | null
+  priority?: number
+  endpoint?: string | null
+  proxyUrl?: string | null
+  proxyUsername?: string | null
+  proxyPassword?: string | null
+}
+
+export interface OAuthStartResponse {
+  sessionId: string
+  provider: OAuthProvider
+  authMethod: OAuthAuthMethod
+  authUrl: string
+  redirectUri: string
+  expiresAt: string
+  completionMode: 'pasteCallbackUrl'
+}
+
+export interface OAuthCompleteRequest {
+  sessionId: string
+  callbackUrl?: string | null
+}
+
+export interface OAuthCompleteResponse {
+  success: boolean
+  credentialId: number
+  email?: string | null
+  subscriptionTitle?: string | null
+  supportedModelIds: string[]
+}
+
+export interface OAuthStatusResponse {
+  sessionId: string
+  state: OAuthSessionState
+  provider: OAuthProvider
+  expiresAt: string
+  credentialId?: number | null
+  error?: string | null
+}

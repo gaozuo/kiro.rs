@@ -22,6 +22,11 @@ import type {
   UpdateProxyConfigRequest,
   GlobalConfigResponse,
   UpdateGlobalConfigRequest,
+  OAuthStartRequest,
+  OAuthStartResponse,
+  OAuthCompleteRequest,
+  OAuthCompleteResponse,
+  OAuthStatusResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -306,5 +311,31 @@ export async function getGlobalConfig(): Promise<GlobalConfigResponse> {
 // 更新全局配置
 export async function updateGlobalConfig(req: UpdateGlobalConfigRequest): Promise<SuccessResponse> {
   const { data } = await api.put<SuccessResponse>('/config/global', req)
+  return data
+}
+
+export async function startOAuthLogin(req: OAuthStartRequest): Promise<OAuthStartResponse> {
+  const { data } = await api.post<OAuthStartResponse>('/oauth/start', req)
+  return data
+}
+
+export async function completeOAuthLogin(
+  req: OAuthCompleteRequest
+): Promise<OAuthCompleteResponse> {
+  const { data } = await api.post<OAuthCompleteResponse>('/oauth/complete', req)
+  return data
+}
+
+export async function getOAuthStatus(sessionId: string): Promise<OAuthStatusResponse> {
+  const { data } = await api.get<OAuthStatusResponse>(
+    `/oauth/status/${encodeURIComponent(sessionId)}`
+  )
+  return data
+}
+
+export async function cancelOAuthLogin(sessionId: string): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(
+    `/oauth/cancel/${encodeURIComponent(sessionId)}`
+  )
   return data
 }
