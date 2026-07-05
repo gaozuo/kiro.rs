@@ -1,6 +1,6 @@
 //! Admin API 类型定义
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 // ============ 凭据状态 ============
 
@@ -314,20 +314,83 @@ impl SuccessResponse {
 
 // ============ 批量导入 token.json ============
 
-/// 官方 token.json 格式（用于解析导入）
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// 官方 token.json / Kiro Account Manager 导出格式（用于解析导入）
+#[derive(Debug)]
 pub struct TokenJsonItem {
     pub provider: Option<String>,
     pub refresh_token: Option<String>,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub auth_method: Option<String>,
-    #[serde(default)]
     pub priority: u32,
     pub region: Option<String>,
     pub api_region: Option<String>,
     pub machine_id: Option<String>,
+    pub email: Option<String>,
+    pub subscription_title: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for TokenJsonItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct RawTokenJsonItem {
+            provider: Option<String>,
+            refresh_token: Option<String>,
+            client_id: Option<String>,
+            client_secret: Option<String>,
+            auth_method: Option<String>,
+            #[serde(default)]
+            priority: u32,
+            region: Option<String>,
+            api_region: Option<String>,
+            machine_id: Option<String>,
+            email: Option<String>,
+            subscription_title: Option<String>,
+            usage_data: Option<serde_json::Value>,
+        }
+
+        let raw = RawTokenJsonItem::deserialize(deserializer)?;
+        let subscription_title = raw
+            .subscription_title
+            .and_then(|title| clean_import_string(title, 120))
+            .or_else(|| subscription_title_from_usage_data(raw.usage_data.as_ref()));
+
+        Ok(Self {
+            provider: raw.provider,
+            refresh_token: raw.refresh_token,
+            client_id: raw.client_id,
+            client_secret: raw.client_secret,
+            auth_method: raw.auth_method,
+            priority: raw.priority,
+            region: raw.region,
+            api_region: raw.api_region,
+            machine_id: raw.machine_id,
+            email: raw.email.and_then(|email| clean_import_string(email, 320)),
+            subscription_title,
+        })
+    }
+}
+
+fn clean_import_string(value: String, max_len: usize) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > max_len {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn subscription_title_from_usage_data(usage_data: Option<&serde_json::Value>) -> Option<String> {
+    let title = usage_data?
+        .get("subscriptionInfo")
+        .and_then(|value| value.get("subscriptionTitle"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)?;
+    clean_import_string(title, 120)
 }
 
 /// 批量导入请求

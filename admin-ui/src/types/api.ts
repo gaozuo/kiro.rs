@@ -343,7 +343,11 @@ export interface TokenJsonItem {
   authMethod?: string
   priority?: number
   region?: string
+  apiRegion?: string
   machineId?: string
+  email?: string
+  subscriptionTitle?: string
+  usageData?: unknown
 }
 
 // 批量导入请求

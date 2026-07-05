@@ -687,6 +687,15 @@ impl AdminService {
             results.push(result);
         }
 
+        if !dry_run {
+            let refresh_ids = results
+                .iter()
+                .filter(|result| result.action == ImportAction::Added)
+                .filter_map(|result| result.credential_id)
+                .collect::<Vec<_>>();
+            self.schedule_import_usage_refresh(refresh_ids);
+        }
+
         ImportTokenJsonResponse {
             summary: ImportSummary {
                 parsed: results.len(),
@@ -784,8 +793,8 @@ impl AdminService {
             endpoint: None,
             idp: None,
             overage_enabled: None,
-            email: None,
-            subscription_title: None,
+            email: item.email,
+            subscription_title: item.subscription_title,
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
@@ -809,6 +818,28 @@ impl AdminService {
                 credential_id: None,
             },
         }
+    }
+
+    fn schedule_import_usage_refresh(&self, credential_ids: Vec<u64>) {
+        if credential_ids.is_empty() {
+            return;
+        }
+
+        let token_manager = Arc::clone(&self.token_manager);
+        tokio::spawn(async move {
+            for (index, credential_id) in credential_ids.into_iter().enumerate() {
+                if index > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+
+                if let Err(e) = token_manager.get_usage_limits_for(credential_id).await {
+                    tracing::warn!(
+                        "导入凭据后后台获取订阅等级失败（不影响凭据导入）: {}",
+                        e
+                    );
+                }
+            }
+        });
     }
 
     /// 生成凭据指纹（用于识别）
@@ -1286,6 +1317,48 @@ mod tests {
         let service = create_test_service();
         let config = service.get_global_config();
         assert_eq!(config.default_endpoint, "ide"); // Config::default() 的默认值
+    }
+
+    #[test]
+    fn token_json_item_extracts_kam_account_metadata() {
+        let item: TokenJsonItem = serde_json::from_value(serde_json::json!({
+            "email": " user@example.com ",
+            "refreshToken": "r".repeat(150),
+            "usageData": {
+                "subscriptionInfo": {
+                    "subscriptionTitle": " KIRO PRO "
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(item.email.as_deref(), Some("user@example.com"));
+        assert_eq!(item.subscription_title.as_deref(), Some("KIRO PRO"));
+    }
+
+    #[test]
+    fn token_json_item_drops_empty_or_oversized_metadata() {
+        let item: TokenJsonItem = serde_json::from_value(serde_json::json!({
+            "email": "",
+            "refreshToken": "r".repeat(150),
+            "subscriptionTitle": " ".repeat(8)
+        }))
+        .unwrap();
+
+        assert!(item.email.is_none());
+        assert!(item.subscription_title.is_none());
+
+        let item: TokenJsonItem = serde_json::from_value(serde_json::json!({
+            "refreshToken": "r".repeat(150),
+            "usageData": {
+                "subscriptionInfo": {
+                    "subscriptionTitle": "x".repeat(121)
+                }
+            }
+        }))
+        .unwrap();
+
+        assert!(item.subscription_title.is_none());
     }
 
     #[test]

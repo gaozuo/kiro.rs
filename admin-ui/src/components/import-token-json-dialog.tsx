@@ -33,6 +33,15 @@ interface VerifyItemResult {
   rollbackError?: string
 }
 
+function readSubscriptionTitle(usageData: unknown): string | undefined {
+  if (!usageData || typeof usageData !== 'object') return undefined
+  const data = usageData as Record<string, unknown>
+  const subscriptionInfo = data.subscriptionInfo
+  if (!subscriptionInfo || typeof subscriptionInfo !== 'object') return undefined
+  const title = (subscriptionInfo as Record<string, unknown>).subscriptionTitle
+  return typeof title === 'string' && title.trim() ? title.trim() : undefined
+}
+
 export function ImportTokenJsonDialog({ open, onOpenChange }: ImportTokenJsonDialogProps) {
   const [step, setStep] = useState<Step>('input')
   const [jsonText, setJsonText] = useState('')
@@ -93,6 +102,7 @@ export function ImportTokenJsonDialog({ open, onOpenChange }: ImportTokenJsonDia
         nickname,
         status: typeof obj.status === 'string' ? obj.status : undefined,
         machineId: typeof obj.machineId === 'string' ? obj.machineId : undefined,
+        usageData: obj.usageData && typeof obj.usageData === 'object' ? obj.usageData : undefined,
         credentials: {
           refreshToken: obj.refreshToken,
           clientId: typeof obj.clientId === 'string' ? obj.clientId : undefined,
@@ -116,12 +126,16 @@ export function ImportTokenJsonDialog({ open, onOpenChange }: ImportTokenJsonDia
     // 跳过 error 状态的账号
     if (account.status === 'error') return null
     const authMethod = cred.authMethod as string | undefined
+    const subscriptionTitle = readSubscriptionTitle(account.usageData)
     return {
       refreshToken: cred.refreshToken.trim(),
       clientId: cred.clientId as string | undefined,
       clientSecret: cred.clientSecret as string | undefined,
       authMethod: (!authMethod && cred.clientId && cred.clientSecret) ? 'idc' : authMethod,
       region: cred.region as string | undefined,
+      email: account.email as string | undefined,
+      subscriptionTitle,
+      usageData: account.usageData,
       machineId: account.machineId as string | undefined,
     }
   }, [])

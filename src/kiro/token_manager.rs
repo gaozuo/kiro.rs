@@ -3259,7 +3259,12 @@ impl MultiTokenManager {
         validated_cred.client_secret = new_cred.client_secret;
         validated_cred.region = new_cred.region;
         validated_cred.machine_id = new_cred.machine_id;
-        validated_cred.email = new_cred.email;
+        if new_cred.email.is_some() {
+            validated_cred.email = new_cred.email;
+        }
+        if new_cred.subscription_title.is_some() {
+            validated_cred.subscription_title = new_cred.subscription_title;
+        }
         validated_cred.api_region = new_cred.api_region;
         validated_cred.proxy_url = new_cred.proxy_url;
         validated_cred.proxy_username = new_cred.proxy_username;
