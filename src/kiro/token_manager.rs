@@ -1037,6 +1037,11 @@ impl MultiTokenManager {
         *self.proxy.write() = proxy;
     }
 
+    /// 获取当前全局代理配置的克隆
+    pub fn global_proxy(&self) -> Option<ProxyConfig> {
+        self.proxy.read().clone()
+    }
+
     /// 热更新全局 Region
     pub fn update_region(&self, region: String) {
         self.config.write().region = region;
