@@ -111,6 +111,30 @@ mod tests {
     }
 
     #[test]
+    fn callback_redirect_validator_rejects_wrong_social_url() {
+        let err = validate_callback_redirect(
+            "http://127.0.0.1:8990/oauth/callback?code=abc&state=state-1",
+            SOCIAL_REDIRECT_URI,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("不匹配"));
+    }
+
+    #[test]
+    fn completed_session_clears_stale_error() {
+        let mut session = test_session();
+        session.error = Some("state 不匹配，请重新开始登录".to_string());
+
+        session.mark_completed(42);
+
+        assert_eq!(session.state_kind, OAuthSessionState::Completed);
+        assert_eq!(session.credential_id, Some(42));
+        assert!(session.error.is_none());
+        assert!(session.state.is_empty());
+        assert!(session.code_verifier.is_none());
+    }
+
+    #[test]
     fn callback_parser_rejects_missing_code() {
         let err = parse_callback_input(
             "kiro://kiro.kiroAgent/authenticate-success?state=state-1",
@@ -469,6 +493,26 @@ pub fn parse_callback_input(input: &str) -> anyhow::Result<ParsedCallback> {
         .ok_or_else(|| anyhow::anyhow!("回调 URL 缺少 state"))?;
 
     Ok(ParsedCallback { code, state })
+}
+
+pub fn validate_callback_redirect(input: &str, expected_redirect_uri: &str) -> anyhow::Result<()> {
+    let actual =
+        url::Url::parse(input.trim()).map_err(|_| anyhow::anyhow!("请粘贴完整 callback URL"))?;
+    let expected = url::Url::parse(expected_redirect_uri)
+        .map_err(|_| anyhow::anyhow!("OAuth session redirect URI 无效"))?;
+
+    let matches_redirect = actual.scheme() == expected.scheme()
+        && actual.host_str() == expected.host_str()
+        && actual.port_or_known_default() == expected.port_or_known_default()
+        && actual.path() == expected.path()
+        && actual.username().is_empty()
+        && actual.password().is_none();
+
+    if !matches_redirect {
+        bail!("callback URL 与当前登录会话不匹配");
+    }
+
+    Ok(())
 }
 
 pub fn build_social_auth_url(
@@ -1099,7 +1143,7 @@ use super::oauth::{
     build_social_auth_url, exchange_idc_token, exchange_social_token, generate_machine_id,
     generate_pkce_pair, generate_session_id, generate_state, idc_callback_redirect_uri,
     map_idc_credentials, map_social_credentials, parse_callback_input, register_idc_client,
-    session_expiry,
+    session_expiry, validate_callback_redirect,
 };
 ```
 
@@ -1335,6 +1379,10 @@ pub async fn complete_oauth_login(
             return Err(self.record_oauth_session_error(session, error));
         }
     };
+    if let Err(e) = validate_callback_redirect(callback_url, &session.redirect_uri) {
+        let error = AdminServiceError::InvalidCredential(e.to_string());
+        return Err(self.record_oauth_session_error(session, error));
+    }
     let parsed = match parse_callback_input(callback_url) {
         Ok(parsed) => parsed,
         Err(e) => {
@@ -1460,10 +1508,7 @@ pub async fn complete_oauth_login(
         })
         .unwrap_or_default();
 
-    session.state_kind = OAuthSessionState::Completed;
-    session.credential_id = Some(credential_id);
-    session.code_verifier = None;
-    session.client_secret = None;
+    session.mark_completed(credential_id);
     self.oauth_sessions.update(session);
 
     Ok(OAuthCompleteResponse {

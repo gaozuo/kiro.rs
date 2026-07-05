@@ -365,6 +365,26 @@ pub fn parse_callback_input(input: &str) -> anyhow::Result<ParsedCallback> {
     Ok(ParsedCallback { code, state })
 }
 
+pub fn validate_callback_redirect(input: &str, expected_redirect_uri: &str) -> anyhow::Result<()> {
+    let actual =
+        url::Url::parse(input.trim()).map_err(|_| anyhow::anyhow!("请粘贴完整 callback URL"))?;
+    let expected = url::Url::parse(expected_redirect_uri)
+        .map_err(|_| anyhow::anyhow!("OAuth session redirect URI 无效"))?;
+
+    let matches_redirect = actual.scheme() == expected.scheme()
+        && actual.host_str() == expected.host_str()
+        && actual.port_or_known_default() == expected.port_or_known_default()
+        && actual.path() == expected.path()
+        && actual.username().is_empty()
+        && actual.password().is_none();
+
+    if !matches_redirect {
+        bail!("callback URL 与当前登录会话不匹配");
+    }
+
+    Ok(())
+}
+
 pub fn build_social_auth_url(provider: OAuthProvider, code_challenge: &str, state: &str) -> String {
     format!(
         "https://prod.us-east-1.auth.desktop.kiro.dev/login?idp={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
@@ -679,6 +699,32 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("完整 callback URL"));
+    }
+
+    #[test]
+    fn callback_redirect_validator_rejects_wrong_social_url() {
+        let err = match validate_callback_redirect(
+            "http://127.0.0.1:8990/oauth/callback?code=abc&state=state-1",
+            SOCIAL_REDIRECT_URI,
+        ) {
+            Ok(_) => panic!("wrong callback redirect should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("不匹配"));
+    }
+
+    #[test]
+    fn completed_session_clears_stale_error() {
+        let mut session = test_session();
+        session.error = Some("state 不匹配，请重新开始登录".to_string());
+
+        session.mark_completed(42);
+
+        assert_eq!(session.state_kind, OAuthSessionState::Completed);
+        assert_eq!(session.credential_id, Some(42));
+        assert!(session.error.is_none());
+        assert!(session.state.is_empty());
+        assert!(session.code_verifier.is_none());
     }
 
     #[test]

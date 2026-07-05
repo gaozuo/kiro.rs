@@ -25,6 +25,7 @@ use super::oauth::{
     exchange_idc_token, exchange_social_token, generate_machine_id, generate_pkce_pair,
     generate_session_id, generate_state, idc_callback_redirect_uri, map_idc_credentials,
     map_social_credentials, parse_callback_input, register_idc_client, session_expiry,
+    validate_callback_redirect,
 };
 use super::types::{
     AddCredentialRequest, AddCredentialResponse, BalanceResponse, CachedBalanceItem,
@@ -675,6 +676,10 @@ impl AdminService {
                 return Err(self.record_oauth_session_error(session, error));
             }
         };
+        if let Err(e) = validate_callback_redirect(callback_url, &session.redirect_uri) {
+            let error = AdminServiceError::InvalidCredential(e.to_string());
+            return Err(self.record_oauth_session_error(session, error));
+        }
         let parsed = match parse_callback_input(callback_url) {
             Ok(parsed) => parsed,
             Err(e) => {
@@ -792,10 +797,7 @@ impl AdminService {
             })
             .unwrap_or_default();
 
-        session.state_kind = OAuthSessionState::Completed;
-        session.credential_id = Some(credential_id);
-        session.code_verifier = None;
-        session.client_secret = None;
+        session.mark_completed(credential_id);
         self.oauth_sessions.update(session);
 
         Ok(OAuthCompleteResponse {
@@ -1800,6 +1802,47 @@ mod tests {
             .oauth_status(&response.session_id)
             .expect("session should remain visible");
         assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Pending);
+    }
+
+    #[tokio::test]
+    async fn oauth_complete_rejects_wrong_callback_redirect() {
+        let service = create_test_service();
+        let response = service
+            .start_oauth_login(crate::admin::oauth::OAuthStartRequest {
+                provider: crate::admin::oauth::OAuthProvider::Google,
+                region: Some("us-east-1".to_string()),
+                start_url: None,
+                priority: 0,
+                endpoint: None,
+                proxy_url: None,
+                proxy_username: None,
+                proxy_password: None,
+            })
+            .await
+            .expect("start should succeed");
+        let auth_url = url::Url::parse(&response.auth_url).expect("auth url should parse");
+        let state = auth_url
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .map(|(_, value)| value.into_owned())
+            .expect("auth url should include state");
+
+        let result = service
+            .complete_oauth_login(crate::admin::oauth::OAuthCompleteRequest {
+                session_id: response.session_id.clone(),
+                callback_url: Some(format!(
+                    "http://127.0.0.1:8990/oauth/callback?code=abc&state={state}"
+                )),
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("不匹配"));
+        let status = service
+            .oauth_status(&response.session_id)
+            .expect("session should remain visible");
+        assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Pending);
+        assert!(status.error.unwrap_or_default().contains("不匹配"));
     }
 
     #[tokio::test]
