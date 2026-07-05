@@ -12,6 +12,8 @@ pub struct CredentialsStatusResponse {
     pub total: usize,
     /// 可用凭据数量（未禁用）
     pub available: usize,
+    /// 当前启用且套餐可识别凭据支持的模型 ID 并集
+    pub available_model_ids: Vec<String>,
     /// 各凭据状态列表
     pub credentials: Vec<CredentialStatusItem>,
 }
@@ -44,6 +46,10 @@ pub struct CredentialStatusItem {
     pub email: Option<String>,
     /// 已持久化的订阅等级（页面刷新后可直接展示）
     pub subscription_title: Option<String>,
+    /// 此凭据套餐支持的模型 ID 列表（未知套餐为空）
+    pub supported_model_ids: Vec<String>,
+    /// 此凭据套餐支持的模型数量
+    pub supported_model_count: usize,
     /// API 调用成功次数
     pub success_count: u64,
     /// 最后一次 API 调用时间（RFC3339 格式）

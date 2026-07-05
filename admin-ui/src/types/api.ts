@@ -2,6 +2,7 @@
 export interface CredentialsStatusResponse {
   total: number
   available: number
+  availableModelIds: string[]
   credentials: CredentialStatusItem[]
 }
 
@@ -20,6 +21,8 @@ export interface CredentialStatusItem {
   email?: string
   refreshTokenHash?: string
   subscriptionTitle?: string | null
+  supportedModelIds?: string[]
+  supportedModelCount?: number
 
   // ===== 统计（可持久化） =====
   callsTotal: number

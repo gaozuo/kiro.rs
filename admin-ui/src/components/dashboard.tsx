@@ -596,7 +596,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setAvailableModelsDialogOpen(true)}>
               <Boxes className="h-4 w-4 mr-2" />
-              可用模型
+              可用模型{data?.availableModelIds ? ` ${data.availableModelIds.length}` : ''}
             </Button>
             <Button variant="ghost" size="icon" onClick={toggleDarkMode}>
               {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
@@ -851,6 +851,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       <AvailableModelsDialog
         open={availableModelsDialogOpen}
         onOpenChange={setAvailableModelsDialogOpen}
+        availableModelIds={data?.availableModelIds ?? []}
       />
 
       {/* 全局代理配置对话框（保留兼容） */}
