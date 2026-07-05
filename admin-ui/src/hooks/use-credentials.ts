@@ -23,12 +23,18 @@ import {
   updateProxyConfig,
   getGlobalConfig,
   updateGlobalConfig,
+  startOAuthLogin,
+  completeOAuthLogin,
+  getOAuthStatus,
+  cancelOAuthLogin,
 } from '@/api/credentials'
 import type {
   AddCredentialRequest,
   ImportTokenJsonRequest,
   UpdateGlobalConfigRequest,
   SetCredentialProxyRequest,
+  OAuthStartRequest,
+  OAuthCompleteRequest,
 } from '@/types/api'
 
 // 查询凭据列表
@@ -279,6 +285,45 @@ export function useUpdateGlobalConfig() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error?.message || '更新失败')
+    },
+  })
+}
+
+export function useStartOAuthLogin() {
+  return useMutation({
+    mutationFn: (req: OAuthStartRequest) => startOAuthLogin(req),
+  })
+}
+
+export function useCompleteOAuthLogin() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: OAuthCompleteRequest) => completeOAuthLogin(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['cached-balances'] })
+    },
+  })
+}
+
+export function useOAuthStatus(sessionId: string | null) {
+  return useQuery({
+    queryKey: ['oauth-status', sessionId],
+    queryFn: () => getOAuthStatus(sessionId!),
+    enabled: Boolean(sessionId),
+    refetchInterval: (query) => {
+      const state = query.state.data?.state
+      return state === 'pending' ? 2000 : false
+    },
+  })
+}
+
+export function useCancelOAuthLogin() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (sessionId: string) => cancelOAuthLogin(sessionId),
+    onSuccess: (_res, sessionId) => {
+      queryClient.invalidateQueries({ queryKey: ['oauth-status', sessionId] })
     },
   })
 }
