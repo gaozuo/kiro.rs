@@ -376,7 +376,8 @@ pub fn validate_callback_redirect(input: &str, expected_redirect_uri: &str) -> a
         && actual.port_or_known_default() == expected.port_or_known_default()
         && actual.path() == expected.path()
         && actual.username().is_empty()
-        && actual.password().is_none();
+        && actual.password().is_none()
+        && actual.fragment().is_none();
 
     if !matches_redirect {
         bail!("callback URL 与当前登录会话不匹配");
@@ -708,6 +709,18 @@ mod tests {
             SOCIAL_REDIRECT_URI,
         ) {
             Ok(_) => panic!("wrong callback redirect should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("不匹配"));
+    }
+
+    #[test]
+    fn callback_redirect_validator_rejects_fragment() {
+        let err = match validate_callback_redirect(
+            "kiro://kiro.kiroAgent/authenticate-success?code=abc&state=state-1#extra",
+            SOCIAL_REDIRECT_URI,
+        ) {
+            Ok(_) => panic!("fragment-bearing callback redirect should fail"),
             Err(err) => err,
         };
         assert!(err.to_string().contains("不匹配"));

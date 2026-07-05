@@ -43,7 +43,7 @@ function isValidEnterpriseStartUrl(value: string): boolean {
     return (
       parsed.protocol === 'https:' &&
       parsed.hostname.length > 0 &&
-      (parsed.pathname === '/start' || parsed.pathname.endsWith('/start'))
+      parsed.pathname === '/start'
     )
   } catch {
     return false
@@ -130,7 +130,7 @@ export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) 
     }
 
     if (isEnterprise && !isValidEnterpriseStartUrl(startUrl.trim())) {
-      toast.error('Enterprise Start URL 必须是 https 链接，且路径为 /start 或以 /start 结尾')
+      toast.error('Enterprise Start URL 必须是 https 链接，且路径为 /start')
       return
     }
 
@@ -311,6 +311,9 @@ export function OAuthLoginDialog({ open, onOpenChange }: OAuthLoginDialogProps) 
                   placeholder="粘贴授权完成后的 callback URL"
                   value={callbackUrl}
                   onChange={(event) => setCallbackUrl(event.target.value)}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
                   disabled={completeOAuth.isPending}
                 />
               </div>

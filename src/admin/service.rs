@@ -239,11 +239,9 @@ impl AdminService {
                         "Enterprise Start URL 格式无效".to_string(),
                     )
                 })?;
-                if parsed.host_str().is_none()
-                    || (parsed.path() != "/start" && !parsed.path().ends_with("/start"))
-                {
+                if parsed.host_str().is_none() || parsed.path() != "/start" {
                     return Err(AdminServiceError::InvalidCredential(
-                        "Enterprise Start URL 路径必须为 /start 或以 /start 结尾".to_string(),
+                        "Enterprise Start URL 路径必须为 /start".to_string(),
                     ));
                 }
                 Ok(Some(value))
@@ -1736,7 +1734,7 @@ mod tests {
     }
 
     #[test]
-    fn oauth_enterprise_start_url_accepts_nested_start_path() {
+    fn oauth_enterprise_start_url_accepts_exact_start_path() {
         let result = AdminService::normalize_oauth_start_url(
             crate::admin::oauth::OAuthProvider::Enterprise,
             Some("https://d-1234567890.awsapps.com/start".to_string()),
@@ -1747,6 +1745,17 @@ mod tests {
             result.as_deref(),
             Some("https://d-1234567890.awsapps.com/start")
         );
+    }
+
+    #[test]
+    fn oauth_enterprise_start_url_rejects_nested_start_path() {
+        let result = AdminService::normalize_oauth_start_url(
+            crate::admin::oauth::OAuthProvider::Enterprise,
+            Some("https://d-1234567890.awsapps.com/malicious/start".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(result.to_string().contains("路径必须为 /start"));
     }
 
     #[test]
