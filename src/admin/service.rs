@@ -259,6 +259,17 @@ impl AdminService {
         Ok(endpoint)
     }
 
+    fn fail_oauth_session(
+        &self,
+        mut session: OAuthSession,
+        error: AdminServiceError,
+    ) -> AdminServiceError {
+        session.state_kind = OAuthSessionState::Failed;
+        session.error = Some(error.to_string());
+        self.oauth_sessions.update(session);
+        error
+    }
+
     /// 设置凭据级 Web Portal Idp
     pub fn set_idp(&self, id: u64, idp: Option<String>) -> Result<(), AdminServiceError> {
         self.token_manager
@@ -641,25 +652,40 @@ impl AdminService {
         }
 
         let parsed = match req.callback_url.as_deref() {
-            Some(callback_url) => parse_callback_input(callback_url)
-                .map_err(|e| AdminServiceError::InvalidCredential(e.to_string()))?,
+            Some(callback_url) => match parse_callback_input(callback_url) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    let error = AdminServiceError::InvalidCredential(e.to_string());
+                    return Err(self.fail_oauth_session(session, error));
+                }
+            },
             None => {
-                let code = req
+                let code = match req
                     .code
                     .as_deref()
                     .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| {
-                        AdminServiceError::InvalidCredential("回调 URL 缺少 code".to_string())
-                    })?;
-                let state = req
+                    .filter(|s| !s.is_empty()) {
+                    Some(code) => code,
+                    None => {
+                        let error = AdminServiceError::InvalidCredential(
+                            "回调 URL 缺少 code".to_string(),
+                        );
+                        return Err(self.fail_oauth_session(session, error));
+                    }
+                };
+                let state = match req
                     .state
                     .as_deref()
                     .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| {
-                        AdminServiceError::InvalidCredential("回调 URL 缺少 state".to_string())
-                    })?;
+                    .filter(|s| !s.is_empty()) {
+                    Some(state) => state,
+                    None => {
+                        let error = AdminServiceError::InvalidCredential(
+                            "回调 URL 缺少 state".to_string(),
+                        );
+                        return Err(self.fail_oauth_session(session, error));
+                    }
+                };
                 crate::admin::oauth::ParsedCallback {
                     code: code.to_string(),
                     state: state.to_string(),
@@ -668,20 +694,25 @@ impl AdminService {
         };
 
         if parsed.state != session.state {
-            return Err(AdminServiceError::InvalidCredential(
-                "state 不匹配，请重新开始登录".to_string(),
-            ));
+            let error =
+                AdminServiceError::InvalidCredential("state 不匹配，请重新开始登录".to_string());
+            return Err(self.fail_oauth_session(session, error));
         }
 
-        let code_verifier = session.code_verifier.take().ok_or_else(|| {
-            AdminServiceError::InvalidCredential("登录会话已完成或无效".to_string())
-        })?;
+        let code_verifier = match session.code_verifier.take() {
+            Some(code_verifier) => code_verifier,
+            None => {
+                let error =
+                    AdminServiceError::InvalidCredential("登录会话已完成或无效".to_string());
+                return Err(self.fail_oauth_session(session, error));
+            }
+        };
         let config = self.config.read().clone();
         let proxy = self.token_manager.global_proxy();
 
         let credential = match session.auth_method {
             AuthMethod::Social => {
-                let token = exchange_social_token(
+                let token = match exchange_social_token(
                     &parsed.code,
                     &code_verifier,
                     &session.redirect_uri,
@@ -689,20 +720,35 @@ impl AdminService {
                     &config,
                     proxy.as_ref(),
                 )
-                .await
-                .map_err(|e| self.classify_add_error(e))?;
+                .await {
+                    Ok(token) => token,
+                    Err(e) => {
+                        let error = self.classify_add_error(e);
+                        return Err(self.fail_oauth_session(session, error));
+                    }
+                };
                 map_social_credentials(&session, token)
             }
             AuthMethod::Idc => {
-                let client_id = session.client_id.clone().ok_or_else(|| {
-                    AdminServiceError::InvalidCredential("IdC session missing clientId".to_string())
-                })?;
-                let client_secret = session.client_secret.clone().ok_or_else(|| {
-                    AdminServiceError::InvalidCredential(
-                        "IdC session missing clientSecret".to_string(),
-                    )
-                })?;
-                let token = exchange_idc_token(
+                let client_id = match session.client_id.clone() {
+                    Some(client_id) => client_id,
+                    None => {
+                        let error = AdminServiceError::InvalidCredential(
+                            "IdC session missing clientId".to_string(),
+                        );
+                        return Err(self.fail_oauth_session(session, error));
+                    }
+                };
+                let client_secret = match session.client_secret.clone() {
+                    Some(client_secret) => client_secret,
+                    None => {
+                        let error = AdminServiceError::InvalidCredential(
+                            "IdC session missing clientSecret".to_string(),
+                        );
+                        return Err(self.fail_oauth_session(session, error));
+                    }
+                };
+                let token = match exchange_idc_token(
                     &session.region,
                     &client_id,
                     &client_secret,
@@ -712,17 +758,30 @@ impl AdminService {
                     &config,
                     proxy.as_ref(),
                 )
-                .await
-                .map_err(|e| self.classify_add_error(e))?;
-                map_idc_credentials(&session, token).map_err(|e| self.classify_add_error(e))?
+                .await {
+                    Ok(token) => token,
+                    Err(e) => {
+                        let error = self.classify_add_error(e);
+                        return Err(self.fail_oauth_session(session, error));
+                    }
+                };
+                match map_idc_credentials(&session, token) {
+                    Ok(credential) => credential,
+                    Err(e) => {
+                        let error = self.classify_add_error(e);
+                        return Err(self.fail_oauth_session(session, error));
+                    }
+                }
             }
         };
 
-        let credential_id = self
-            .token_manager
-            .add_credential(credential)
-            .await
-            .map_err(|e| self.classify_add_error(e))?;
+        let credential_id = match self.token_manager.add_credential(credential).await {
+            Ok(credential_id) => credential_id,
+            Err(e) => {
+                let error = self.classify_add_error(e);
+                return Err(self.fail_oauth_session(session, error));
+            }
+        };
 
         if let Err(e) = self.token_manager.get_usage_limits_for(credential_id).await {
             tracing::warn!("OAuth 添加凭据后获取订阅等级失败（不影响凭据添加）: {}", e);
@@ -1678,6 +1737,49 @@ mod tests {
             .cancel_oauth_login(&response.session_id)
             .expect("cancel should succeed");
         assert!(service.oauth_status(&response.session_id).is_err());
+    }
+
+    #[tokio::test]
+    async fn oauth_complete_wrong_state_records_failed_status() {
+        let service = create_test_service();
+        let response = service
+            .start_oauth_login(crate::admin::oauth::OAuthStartRequest {
+                provider: crate::admin::oauth::OAuthProvider::Google,
+                region: Some("us-east-1".to_string()),
+                start_url: None,
+                priority: 0,
+                endpoint: None,
+                proxy_url: None,
+                proxy_username: None,
+                proxy_password: None,
+            })
+            .await
+            .expect("start should succeed");
+
+        let result = service
+            .complete_oauth_login(crate::admin::oauth::OAuthCompleteRequest {
+                session_id: response.session_id.clone(),
+                callback_url: Some(
+                    "kiro://kiro.kiroAgent/authenticate-success?code=abc&state=wrong"
+                        .to_string(),
+                ),
+                code: None,
+                state: None,
+            })
+            .await;
+
+        assert!(result.is_err());
+        let status = service
+            .oauth_status(&response.session_id)
+            .expect("failed status should be retained");
+        assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
+        assert!(
+            status
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("state 不匹配")
+        );
     }
 
     #[test]
