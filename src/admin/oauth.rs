@@ -90,6 +90,7 @@ pub struct OAuthStartResponse {
     pub provider: OAuthProvider,
     pub auth_method: AuthMethod,
     pub auth_url: String,
+    /// Static provider redirect URI, without code/state or pasted callback data.
     pub redirect_uri: String,
     pub expires_at: String,
     pub completion_mode: &'static str,
@@ -180,7 +181,14 @@ impl OAuthSession {
     pub fn clear_sensitive_fields(&mut self) {
         self.state.clear();
         self.code_verifier = None;
+        self.redirect_uri.clear();
+        self.region.clear();
+        self.start_url = None;
+        self.client_id = None;
         self.client_secret = None;
+        self.machine_id.clear();
+        self.priority = 0;
+        self.endpoint = None;
         self.proxy_url = None;
         self.proxy_username = None;
         self.proxy_password = None;
@@ -450,7 +458,14 @@ mod tests {
         assert_eq!(session.credential_id, Some(42));
         assert!(session.state.is_empty());
         assert!(session.code_verifier.is_none());
+        assert!(session.redirect_uri.is_empty());
+        assert!(session.region.is_empty());
+        assert!(session.start_url.is_none());
+        assert!(session.client_id.is_none());
         assert!(session.client_secret.is_none());
+        assert!(session.machine_id.is_empty());
+        assert_eq!(session.priority, 0);
+        assert!(session.endpoint.is_none());
         assert!(session.proxy_url.is_none());
         assert!(session.proxy_username.is_none());
         assert!(session.proxy_password.is_none());
