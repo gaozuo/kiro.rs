@@ -126,6 +126,9 @@ export function CredentialCard({
   const queriedOverageEnabled = balance?.overageEnabled ?? cachedBalance?.overageEnabled ?? credential.overageEnabled ?? null
   const overageEnabled = queriedOverageEnabled === true || credential.overageEnabling === true
   const overageCap = overageEnabled ? (balance?.overageCap ?? cachedBalance?.overageCap ?? 10000) : 0
+  const supportedModelIds = credential.supportedModelIds ?? []
+  const supportedModelCount = credential.supportedModelCount ?? supportedModelIds.length
+  const modelPreview = supportedModelIds.slice(0, 2)
 
   const handleToggleDisabled = () => {
     setDisabled.mutate(
@@ -225,6 +228,7 @@ export function CredentialCard({
       effectiveEndpoint: credential.effectiveEndpoint,
       region: credential.region,
       apiRegion: credential.apiRegion,
+      supportedModelIds,
       proxyUrl: credential.proxyUrl,
       proxyUsername: credential.proxyUsername,
       hasProfileArn: credential.hasProfileArn,
@@ -459,6 +463,33 @@ export function CredentialCard({
               <span className="font-medium truncate">
                 {loadingBalance ? <Loader2 className="inline h-3 w-3 animate-spin" /> : balance?.subscriptionTitle ?? cachedBalance?.subscriptionTitle ?? credential.subscriptionTitle ?? '未知'}
               </span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="shrink-0 text-muted-foreground">可用模型：</span>
+              {supportedModelCount > 0 ? (
+                <div className="flex min-w-0 flex-wrap justify-end gap-1">
+                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                    {supportedModelCount} 个
+                  </Badge>
+                  {modelPreview.map((modelId) => (
+                    <Badge
+                      key={modelId}
+                      variant="outline"
+                      className="max-w-[12rem] truncate px-1.5 text-[10px] font-normal"
+                      title={modelId}
+                    >
+                      {modelId}
+                    </Badge>
+                  ))}
+                  {supportedModelCount > modelPreview.length && (
+                    <Badge variant="outline" className="px-1.5 text-[10px] font-normal">
+                      +{supportedModelCount - modelPreview.length}
+                    </Badge>
+                  )}
+                </div>
+              ) : (
+                <span className="font-medium text-muted-foreground">0 个</span>
+              )}
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">成功次数：</span>
@@ -750,4 +781,3 @@ export function CredentialCard({
     </>
   )
 }
-

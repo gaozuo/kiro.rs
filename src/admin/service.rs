@@ -87,12 +87,30 @@ impl AdminService {
         let snapshot = self.token_manager.snapshot();
 
         let default_endpoint = self.config.read().default_endpoint.clone();
+        let available_model_ids = crate::kiro::model::capabilities::union_model_ids_for_subscriptions(
+            snapshot
+                .entries
+                .iter()
+                .filter(|entry| !entry.disabled)
+                .map(|entry| entry.subscription_title.clone()),
+        )
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         let mut credentials: Vec<CredentialStatusItem> = snapshot
             .entries
             .into_iter()
             .map(|entry| {
                 let endpoint = entry.endpoint;
                 let effective_endpoint = endpoint.clone().unwrap_or(default_endpoint.clone());
+                let supported_model_ids: Vec<String> =
+                    crate::kiro::model::capabilities::model_ids_for_subscription(
+                        entry.subscription_title.as_deref(),
+                    )
+                    .iter()
+                    .map(|id| (*id).to_string())
+                    .collect();
+                let supported_model_count = supported_model_ids.len();
                 CredentialStatusItem {
                     id: entry.id,
                     priority: entry.priority,
@@ -106,6 +124,8 @@ impl AdminService {
                     refresh_token_hash: entry.refresh_token_hash,
                     email: entry.email,
                     subscription_title: entry.subscription_title,
+                    supported_model_ids,
+                    supported_model_count,
                     success_count: entry.success_count,
                     last_used_at: entry.last_used_at.clone(),
                     region: entry.region,
@@ -129,6 +149,7 @@ impl AdminService {
         CredentialsStatusResponse {
             total: snapshot.total,
             available: snapshot.available,
+            available_model_ids,
             credentials,
         }
     }
@@ -1088,6 +1109,10 @@ mod tests {
     use std::fs;
 
     fn create_test_service() -> AdminService {
+        create_test_service_with_credentials(vec![KiroCredentials::default()])
+    }
+
+    fn create_test_service_with_credentials(credentials: Vec<KiroCredentials>) -> AdminService {
         let config_path = env::temp_dir().join(format!(
             "kiro-admin-service-test-{}-{}.json",
             std::process::id(),
@@ -1098,10 +1123,8 @@ mod tests {
         let compression_config = Arc::new(RwLock::new(CompressionConfig::default()));
         let prompt_cache_runtime = Arc::new(RwLock::new(PromptCacheRuntime::new(300, true)));
 
-        let credentials = KiroCredentials::default();
         let tm = Arc::new(
-            MultiTokenManager::new(config.read().clone(), vec![credentials], None, None, false)
-                .unwrap(),
+            MultiTokenManager::new(config.read().clone(), credentials, None, None, false).unwrap(),
         );
 
         let known_endpoints: HashSet<String> = vec!["ide".to_string(), "cli".to_string()]
@@ -1126,6 +1149,16 @@ mod tests {
             prompt_cache_runtime,
             known_endpoints,
         )
+    }
+
+    fn test_credential(id: u64, subscription_title: &str) -> KiroCredentials {
+        KiroCredentials {
+            id: Some(id),
+            access_token: Some(format!("token-{id}")),
+            expires_at: Some((Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+            subscription_title: Some(subscription_title.to_string()),
+            ..Default::default()
+        }
     }
 
     fn read_persisted_config(service: &AdminService) -> Config {
@@ -1253,5 +1286,106 @@ mod tests {
         let service = create_test_service();
         let config = service.get_global_config();
         assert_eq!(config.default_endpoint, "ide"); // Config::default() 的默认值
+    }
+
+    #[test]
+    fn get_all_credentials_exposes_global_and_per_credential_model_ids() {
+        let mut disabled_pro = test_credential(4, "KIRO PRO");
+        disabled_pro.disabled = true;
+        let service = create_test_service_with_credentials(vec![
+            test_credential(1, "KIRO FREE"),
+            test_credential(2, "KIRO PRO"),
+            test_credential(3, "TEST_INVALID_PLAN"),
+            disabled_pro,
+        ]);
+
+        let response = service.get_all_credentials();
+        assert!(response
+            .available_model_ids
+            .contains(&"claude-sonnet-5".to_string()));
+        assert!(response
+            .available_model_ids
+            .contains(&"claude-sonnet-4-5-20250929".to_string()));
+
+        let free = response
+            .credentials
+            .iter()
+            .find(|credential| credential.id == 1)
+            .unwrap();
+        assert_eq!(free.supported_model_count, 3);
+        assert_eq!(
+            free.supported_model_ids,
+            vec![
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4-5-20250929-thinking",
+                "claude-sonnet-4-5-20250929-agentic",
+            ]
+        );
+        assert!(!free
+            .supported_model_ids
+            .contains(&"claude-sonnet-5".to_string()));
+
+        let pro = response
+            .credentials
+            .iter()
+            .find(|credential| credential.id == 2)
+            .unwrap();
+        assert_eq!(pro.supported_model_count, 24);
+        assert!(pro.supported_model_ids.contains(&"claude-sonnet-5".to_string()));
+        assert!(pro
+            .supported_model_ids
+            .contains(&"claude-haiku-4-5-20251001".to_string()));
+
+        let unknown = response
+            .credentials
+            .iter()
+            .find(|credential| credential.id == 3)
+            .unwrap();
+        assert_eq!(unknown.supported_model_count, 0);
+        assert!(unknown.supported_model_ids.is_empty());
+
+        let disabled_pro = response
+            .credentials
+            .iter()
+            .find(|credential| credential.id == 4)
+            .unwrap();
+        assert!(disabled_pro.disabled);
+        assert_eq!(disabled_pro.supported_model_count, 24);
+
+        let value = serde_json::to_value(response).unwrap();
+
+        assert!(
+            value.get("availableModelIds").is_some(),
+            "admin credentials response must expose the global available model id union"
+        );
+
+        let credential = &value["credentials"][0];
+        assert!(
+            credential.get("supportedModelIds").is_some(),
+            "each credential must expose model ids supported by its subscription"
+        );
+        assert!(
+            credential.get("supportedModelCount").is_some(),
+            "each credential must expose a model count for compact UI display"
+        );
+
+        let mut disabled_pro = test_credential(2, "KIRO PRO");
+        disabled_pro.disabled = true;
+        let service = create_test_service_with_credentials(vec![
+            test_credential(1, "KIRO FREE"),
+            disabled_pro,
+        ]);
+        let response = service.get_all_credentials();
+        assert_eq!(
+            response.available_model_ids,
+            vec![
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4-5-20250929-thinking",
+                "claude-sonnet-4-5-20250929-agentic",
+            ]
+        );
+        assert!(!response
+            .available_model_ids
+            .contains(&"claude-sonnet-5".to_string()));
     }
 }

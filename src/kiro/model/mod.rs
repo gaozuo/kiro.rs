@@ -9,6 +9,7 @@
 //! - `usage_limits`: 使用额度查询
 
 pub mod common;
+pub mod capabilities;
 pub mod credentials;
 pub mod events;
 pub mod requests;

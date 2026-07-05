@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import type {
@@ -136,6 +137,7 @@ export function CredentialDetailDialog({
       refreshTokenHash: credential.refreshTokenHash,
       region: credential.region,
       endpoint: credential.endpoint,
+      supportedModelIds,
     }
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -227,6 +229,8 @@ export function CredentialDetailDialog({
   const effectiveBalanceRemaining = effectiveBalance?.remaining ?? Math.max(0, effectiveBalanceTotalLimit - effectiveBalanceUsed)
   const effectiveOverageUsed = Math.max(0, effectiveBalanceUsed - effectiveBalanceBaseLimit)
   const effectiveOverageCost = effectiveOverageUsed * 0.04
+  const supportedModelIds = credential.supportedModelIds ?? []
+  const supportedModelCount = credential.supportedModelCount ?? supportedModelIds.length
   const cachedBalanceTotalLimit = cachedBalance?.usageLimit ?? 0
   const cachedBalanceOverageCap = cachedBalance?.overageEnabled ? (cachedBalance.overageCap ?? 0) : 0
   const cachedBalanceBaseLimit = cachedBalance?.overageEnabled
@@ -368,6 +372,31 @@ export function CredentialDetailDialog({
                 刷新 Token
               </button>
             </div>
+          </section>
+
+          <section className="rounded-lg border p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">可用模型</h3>
+              <Badge variant={supportedModelCount > 0 ? 'secondary' : 'outline'}>
+                {supportedModelCount} 个
+              </Badge>
+            </div>
+            {supportedModelIds.length > 0 ? (
+              <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto">
+                {supportedModelIds.map((modelId) => (
+                  <Badge
+                    key={modelId}
+                    variant="outline"
+                    className="max-w-full truncate font-mono text-[11px] font-normal"
+                    title={modelId}
+                  >
+                    {modelId}
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">当前套餐未匹配到可用模型</div>
+            )}
           </section>
 
           {/* 卡片 2: 代理设置 */}

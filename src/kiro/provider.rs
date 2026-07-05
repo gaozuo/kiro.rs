@@ -143,6 +143,11 @@ impl KiroProvider {
         Ok(())
     }
 
+    /// 返回所有启用且套餐可识别凭据支持的模型 ID 并集。
+    pub fn available_model_ids(&self) -> Vec<&'static str> {
+        self.token_manager.available_model_ids()
+    }
+
     /// 获取凭据对应的 HTTP Client
     ///
     /// 优先使用凭据级代理，否则使用默认 client
@@ -311,8 +316,10 @@ impl KiroProvider {
         &self,
         request_body: &str,
         user_id: Option<&str>,
+        requested_model: Option<&str>,
     ) -> anyhow::Result<ApiCallResult> {
-        self.call_api_with_retry(request_body, false, user_id).await
+        self.call_api_with_retry(request_body, false, user_id, requested_model)
+            .await
     }
 
     /// 发送流式 API 请求
@@ -332,8 +339,10 @@ impl KiroProvider {
         &self,
         request_body: &str,
         user_id: Option<&str>,
+        requested_model: Option<&str>,
     ) -> anyhow::Result<ApiCallResult> {
-        self.call_api_with_retry(request_body, true, user_id).await
+        self.call_api_with_retry(request_body, true, user_id, requested_model)
+            .await
     }
 
     /// 发送 MCP API 请求
@@ -635,10 +644,14 @@ impl KiroProvider {
         request_body: &str,
         is_stream: bool,
         user_id: Option<&str>,
+        requested_model: Option<&str>,
     ) -> anyhow::Result<ApiCallResult> {
         let total_credentials = self.token_manager.total_count();
-        let available = self.token_manager.available_count();
+        let available = self.token_manager.available_count_for_model(requested_model);
         if available == 0 {
+            if let Some(model) = requested_model {
+                anyhow::bail!("没有支持模型 {} 的可用凭据", model);
+            }
             anyhow::bail!("没有可用的凭据");
         }
         let max_retries = Self::compute_max_retries(total_credentials, available);
@@ -653,14 +666,22 @@ impl KiroProvider {
             // 获取调用上下文（绑定 index、credentials、token），支持用户亲和性
             let ctx = match self
                 .token_manager
-                .acquire_context_for_user_excluding(user_id, &failed_ids)
+                .acquire_context_for_user_model_excluding(user_id, requested_model, &failed_ids)
                 .await
             {
                 Ok(c) => c,
                 Err(e) => {
                     last_error = Some(e);
                     // 已 exclude 的凭据数 ≥ 当前可用集合，下一轮清空让 LB 重新挑选
-                    if failed_ids.len() >= self.token_manager.available_count().max(1) {
+                    let available_for_model =
+                        self.token_manager.available_count_for_model(requested_model);
+                    if available_for_model == 0 {
+                        if let Some(model) = requested_model {
+                            anyhow::bail!("没有支持模型 {} 的可用凭据", model);
+                        }
+                        anyhow::bail!("没有可用的凭据");
+                    }
+                    if failed_ids.len() >= available_for_model {
                         failed_ids.clear();
                     }
                     if attempt + 1 < max_retries {

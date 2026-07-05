@@ -1073,6 +1073,53 @@ impl MultiTokenManager {
         self.entries.lock().iter().filter(|e| !e.disabled).count()
     }
 
+    /// 获取支持指定模型的可用凭据数量。
+    ///
+    /// `model_id == None` 保持历史语义，仅按启用状态计数。
+    pub fn available_count_for_model(&self, model_id: Option<&str>) -> usize {
+        self.entries
+            .lock()
+            .iter()
+            .filter(|e| !e.disabled)
+            .filter(|e| {
+                model_id.is_none_or(|id| {
+                    crate::kiro::model::capabilities::credential_supports_model(
+                        e.credentials.subscription_title.as_deref(),
+                        id,
+                    )
+                })
+            })
+            .count()
+    }
+
+    /// 检查指定可用凭据是否支持模型。
+    pub fn credential_supports_model_id(&self, credential_id: u64, model_id: &str) -> bool {
+        self.entries
+            .lock()
+            .iter()
+            .find(|e| e.id == credential_id && !e.disabled)
+            .is_some_and(|e| {
+                crate::kiro::model::capabilities::credential_supports_model(
+                    e.credentials.subscription_title.as_deref(),
+                    model_id,
+                )
+            })
+    }
+
+    /// 返回所有启用且套餐可识别凭据支持的模型 ID 并集。
+    pub fn available_model_ids(&self) -> Vec<&'static str> {
+        let titles = {
+            let entries = self.entries.lock();
+            entries
+                .iter()
+                .filter(|e| !e.disabled)
+                .map(|e| e.credentials.subscription_title.clone())
+                .collect::<Vec<_>>()
+        };
+
+        crate::kiro::model::capabilities::union_model_ids_for_subscriptions(titles)
+    }
+
     /// 输出一份"为什么当前没有可用凭据"的诊断信息（用于排障）
     ///
     /// 注意：该方法只在 DEBUG 日志级别开启时执行，避免给正常路径引入额外开销。
@@ -1238,6 +1285,15 @@ impl MultiTokenManager {
         &self,
         exclude_ids: &[u64],
     ) -> anyhow::Result<CallContext> {
+        self.acquire_context_for_model_excluding(None, exclude_ids)
+            .await
+    }
+
+    async fn acquire_context_for_model_excluding(
+        &self,
+        model_id: Option<&str>,
+        exclude_ids: &[u64],
+    ) -> anyhow::Result<CallContext> {
         // 检查是否需要自动恢复
         self.check_and_recover();
 
@@ -1259,58 +1315,21 @@ impl MultiTokenManager {
             //
             // 这里用 available_count() 判断“可用集合是否已被尝试完”，避免误报
             // "所有凭据均已禁用（x/y）" 这类与事实不符的错误。
-            let enabled_total = self.available_count();
-            if enabled_total > 0 && tried_ids.len() >= enabled_total {
-                if let Some(wait) = min_wait {
-                    // 仅当本轮所有被跳过的凭据都因冷却/限流时，才以 429 + Retry-After 快速返回；
-                    // 若混杂 token 刷新失败等非临时性错误，保留原有 sleep-retry 语义以避免吞掉真实错误。
-                    let all_due_to_cooling = cooling_skipped == tried_ids.len();
-                    if all_due_to_cooling && wait > ALL_CREDENTIALS_COOLDOWN_BAIL_THRESHOLD {
-                        self.debug_log_availability_diagnostics(
-                            "enabled_exhausted_bail_long_wait",
-                            &tried_ids,
-                            min_wait,
-                            min_wait_detail,
-                        );
-                        // Retry-After 语义要求向上取整，避免客户端在实际等待结束前提前重试。
-                        let secs = (wait.as_millis().div_ceil(1000) as u64).max(1);
-                        let (cid, source) = min_wait_detail
-                            .map(|(id, src, _)| (id, src))
-                            .unwrap_or((0, "unknown"));
-                        anyhow::bail!(
-                            "所有凭据均处于冷却/速率限制（retry_after_secs={}，原因：{}，来自凭据 #{}）",
-                            secs,
-                            source,
-                            cid
-                        );
-                    }
-                    self.debug_log_availability_diagnostics(
-                        "enabled_exhausted_sleep",
-                        &tried_ids,
-                        min_wait,
-                        min_wait_detail,
-                    );
-                    tokio::time::sleep(wait).await;
-                    tried_ids.clear();
-                    cooling_skipped = 0;
-                    min_wait = None;
-                    min_wait_detail = None;
-                    continue;
-                }
-                self.debug_log_availability_diagnostics(
-                    "enabled_exhausted_bail",
-                    &tried_ids,
-                    min_wait,
-                    min_wait_detail,
-                );
-                anyhow::bail!(
-                    "所有可用凭据均无法获取有效 Token（可用: {}/{}）",
-                    enabled_total,
-                    total
-                );
+            let enabled_total = self.available_count_for_model(model_id);
+            if enabled_total == 0
+                && let Some(model_id) = model_id
+            {
+                anyhow::bail!("没有支持模型 {} 的可用凭据", model_id);
             }
-
-            if tried_ids.len() >= total {
+            let exhaustion_total = if enabled_total > 0 {
+                enabled_total
+            } else {
+                total
+            };
+            if exhaustion_total == 0 {
+                anyhow::bail!("没有可用的凭据");
+            }
+            if tried_ids.len() >= exhaustion_total {
                 if let Some(wait) = min_wait {
                     let all_due_to_cooling = cooling_skipped == tried_ids.len();
                     if all_due_to_cooling && wait > ALL_CREDENTIALS_COOLDOWN_BAIL_THRESHOLD {
@@ -1350,6 +1369,14 @@ impl MultiTokenManager {
                     min_wait,
                     min_wait_detail,
                 );
+                if let Some(model_id) = model_id {
+                    anyhow::bail!(
+                        "所有支持模型 {} 的可用凭据均无法获取有效 Token（可用: {}/{}）",
+                        model_id,
+                        enabled_total,
+                        total
+                    );
+                }
                 anyhow::bail!(
                     "所有凭据均无法获取有效 Token（可用: {}/{}）",
                     self.available_count(),
@@ -1363,6 +1390,14 @@ impl MultiTokenManager {
                 let mut candidates: Vec<(u64, u32, bool)> = entries
                     .iter()
                     .filter(|e| !e.disabled && !tried_ids.contains(&e.id))
+                    .filter(|e| {
+                        model_id.is_none_or(|id| {
+                            crate::kiro::model::capabilities::credential_supports_model(
+                                e.credentials.subscription_title.as_deref(),
+                                id,
+                            )
+                        })
+                    })
                     .map(|e| (e.id, e.credentials.priority, e.credentials.runtime_only))
                     .collect();
 
@@ -1387,13 +1422,35 @@ impl MultiTokenManager {
                     candidates = entries
                         .iter()
                         .filter(|e| !e.disabled && !tried_ids.contains(&e.id))
+                        .filter(|e| {
+                            model_id.is_none_or(|id| {
+                                crate::kiro::model::capabilities::credential_supports_model(
+                                    e.credentials.subscription_title.as_deref(),
+                                    id,
+                                )
+                            })
+                        })
                         .map(|e| (e.id, e.credentials.priority, e.credentials.runtime_only))
                         .collect();
                 }
 
                 if candidates.is_empty() {
-                    let available = entries.iter().filter(|e| !e.disabled).count();
+                    let available = entries
+                        .iter()
+                        .filter(|e| !e.disabled)
+                        .filter(|e| {
+                            model_id.is_none_or(|id| {
+                                crate::kiro::model::capabilities::credential_supports_model(
+                                    e.credentials.subscription_title.as_deref(),
+                                    id,
+                                )
+                            })
+                        })
+                        .count();
                     if available == 0 {
+                        if let Some(model_id) = model_id {
+                            anyhow::bail!("没有支持模型 {} 的可用凭据", model_id);
+                        }
                         anyhow::bail!("所有凭据均已禁用（{}/{}）", available, total);
                     }
                     anyhow::bail!(
@@ -1501,10 +1558,24 @@ impl MultiTokenManager {
         user_id: Option<&str>,
         exclude_ids: &[u64],
     ) -> anyhow::Result<CallContext> {
+        self.acquire_context_for_user_model_excluding(user_id, None, exclude_ids)
+            .await
+    }
+
+    pub async fn acquire_context_for_user_model_excluding(
+        &self,
+        user_id: Option<&str>,
+        model_id: Option<&str>,
+        exclude_ids: &[u64],
+    ) -> anyhow::Result<CallContext> {
         // 无 user_id 时走默认逻辑
         let user_id = match user_id {
             Some(id) if !id.is_empty() => id,
-            _ => return self.acquire_context_excluding(exclude_ids).await,
+            _ => {
+                return self
+                    .acquire_context_for_model_excluding(model_id, exclude_ids)
+                    .await;
+            }
         };
 
         // 默认保持用户绑定（用于连续对话）。当绑定凭据“临时不可用”（速率限制/短冷却）时，
@@ -1515,7 +1586,10 @@ impl MultiTokenManager {
             // P0#1 修复：retry 时若 affinity 绑定的凭据在 exclude_ids 中（上次失败），
             // 跳过 affinity 短路逻辑，直接走 LB 重新选号。
             let bound_excluded = exclude_ids.contains(&bound_id);
-            let is_enabled = !bound_excluded && {
+            let model_supported = model_id
+                .map(|id| self.credential_supports_model_id(bound_id, id))
+                .unwrap_or(true);
+            let is_enabled = !bound_excluded && model_supported && {
                 let entries = self.entries.lock();
                 entries.iter().any(|e| e.id == bound_id && !e.disabled)
             };
@@ -1589,10 +1663,19 @@ impl MultiTokenManager {
                         }
                     }
                 }
+            } else if !model_supported {
+                tracing::debug!(
+                    user_id = %user_id,
+                    credential_id = %bound_id,
+                    model = ?model_id,
+                    "亲和性绑定凭据不支持请求模型，本次将分流"
+                );
             }
         }
 
-        let ctx = self.acquire_context_excluding(exclude_ids).await?;
+        let ctx = self
+            .acquire_context_for_model_excluding(model_id, exclude_ids)
+            .await?;
         if !keep_affinity_binding {
             self.affinity.set(user_id, ctx.id);
         }
@@ -3683,6 +3766,19 @@ mod tests {
 
     // MultiTokenManager 测试
 
+    fn create_test_credential(id: u64) -> KiroCredentials {
+        KiroCredentials {
+            id: Some(id),
+            access_token: Some(format!("token-{id}")),
+            expires_at: Some((Utc::now() + Duration::hours(1)).to_rfc3339()),
+            ..Default::default()
+        }
+    }
+
+    fn create_test_multi_manager(credentials: Vec<KiroCredentials>) -> MultiTokenManager {
+        MultiTokenManager::new(Config::default(), credentials, None, None, false).unwrap()
+    }
+
     #[test]
     fn test_multi_token_manager_new() {
         let config = Config::default();
@@ -3724,6 +3820,158 @@ mod tests {
         let manager = result.unwrap();
         assert_eq!(manager.total_count(), 0);
         assert_eq!(manager.available_count(), 0);
+    }
+
+    #[test]
+    fn available_model_ids_returns_empty_without_credentials() {
+        let manager = create_test_multi_manager(vec![]);
+        assert!(manager.available_model_ids().is_empty());
+    }
+
+    #[test]
+    fn available_model_ids_returns_empty_for_only_unknown_subscriptions() {
+        let mut unknown = create_test_credential(1);
+        unknown.subscription_title = Some("KIRO STUDENT".to_string());
+        let manager = create_test_multi_manager(vec![unknown]);
+        assert!(manager.available_model_ids().is_empty());
+    }
+
+    #[test]
+    fn available_model_ids_uses_only_enabled_credentials() {
+        let mut free = create_test_credential(1);
+        free.subscription_title = Some("KIRO FREE".to_string());
+        let mut pro = create_test_credential(2);
+        pro.subscription_title = Some("KIRO PRO".to_string());
+        let manager = create_test_multi_manager(vec![free, pro]);
+        manager.set_disabled(2, true).unwrap();
+
+        let ids = manager.available_model_ids();
+        assert_eq!(
+            ids,
+            vec![
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4-5-20250929-thinking",
+                "claude-sonnet-4-5-20250929-agentic",
+            ]
+        );
+    }
+
+    #[test]
+    fn available_model_ids_merges_enabled_account_capabilities() {
+        let mut free = create_test_credential(1);
+        free.subscription_title = Some("KIRO FREE".to_string());
+        let mut pro = create_test_credential(2);
+        pro.subscription_title = Some("KIRO PRO".to_string());
+        let manager = create_test_multi_manager(vec![free, pro]);
+
+        let ids = manager.available_model_ids();
+        assert!(ids.contains(&"claude-sonnet-5"));
+        assert!(ids.contains(&"claude-sonnet-4-5-20250929"));
+        assert!(ids.contains(&"claude-opus-4-8"));
+        assert!(ids.contains(&"claude-haiku-4-5-20251001"));
+    }
+
+    #[test]
+    fn available_count_for_model_filters_unknown_and_unsupported_credentials() {
+        let mut free = create_test_credential(1);
+        free.subscription_title = Some("KIRO FREE".to_string());
+        let mut pro = create_test_credential(2);
+        pro.subscription_title = Some("KIRO PRO".to_string());
+        let mut unknown = create_test_credential(3);
+        unknown.subscription_title = Some("KIRO STUDENT".to_string());
+        let manager = create_test_multi_manager(vec![free, pro, unknown]);
+
+        assert_eq!(
+            manager.available_count_for_model(Some("claude-sonnet-4-5-20250929")),
+            2
+        );
+        assert_eq!(manager.available_count_for_model(Some("claude-sonnet-5")), 1);
+        assert_eq!(
+            manager.available_count_for_model(Some("claude-haiku-4-5-20251001")),
+            1
+        );
+        assert_eq!(manager.available_count_for_model(Some("unknown-model")), 0);
+        assert_eq!(manager.available_count_for_model(None), 3);
+    }
+
+    #[test]
+    fn credential_supports_model_id_uses_subscription_table() {
+        let mut free = create_test_credential(1);
+        free.subscription_title = Some("KIRO FREE".to_string());
+        let manager = create_test_multi_manager(vec![free]);
+
+        assert!(manager.credential_supports_model_id(1, "claude-sonnet-4-5-20250929"));
+        assert!(!manager.credential_supports_model_id(1, "claude-sonnet-5"));
+        assert!(!manager.credential_supports_model_id(999, "claude-sonnet-4-5-20250929"));
+    }
+
+    #[tokio::test]
+    async fn acquire_context_for_user_model_skips_free_for_sonnet_5() {
+        let mut free = create_test_credential(1);
+        free.subscription_title = Some("KIRO FREE".to_string());
+        let mut pro = create_test_credential(2);
+        pro.subscription_title = Some("KIRO PRO".to_string());
+        let manager = create_test_multi_manager(vec![free, pro]);
+
+        let ctx = manager
+            .acquire_context_for_user_model_excluding(
+                Some("user-a"),
+                Some("claude-sonnet-5"),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(ctx.id, 2);
+    }
+
+    #[tokio::test]
+    async fn acquire_context_for_user_model_rejects_unknown_only_pool() {
+        let mut unknown = create_test_credential(1);
+        unknown.subscription_title = Some("KIRO STUDENT".to_string());
+        let manager = create_test_multi_manager(vec![unknown]);
+
+        let err = manager
+            .acquire_context_for_user_model_excluding(
+                Some("user-a"),
+                Some("claude-sonnet-5"),
+                &[],
+            )
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+
+        assert!(err.contains("没有支持模型 claude-sonnet-5 的可用凭据"));
+    }
+
+    #[tokio::test]
+    async fn affinity_does_not_reuse_bound_credential_for_unsupported_model() {
+        let mut free = create_test_credential(1);
+        free.subscription_title = Some("KIRO FREE".to_string());
+        let mut pro = create_test_credential(2);
+        pro.subscription_title = Some("KIRO PRO".to_string());
+        let manager = create_test_multi_manager(vec![free, pro]);
+
+        let sonnet_45 = manager
+            .acquire_context_for_user_model_excluding(
+                Some("user-a"),
+                Some("claude-sonnet-4-5-20250929"),
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(sonnet_45.id, 1);
+
+        let sonnet_5 = manager
+            .acquire_context_for_user_model_excluding(
+                Some("user-a"),
+                Some("claude-sonnet-5"),
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(sonnet_5.id, 2);
     }
 
     #[test]
