@@ -57,8 +57,8 @@ function variantLabel(variant: AvailableModelInfo['variant']): string {
   }
 }
 
-function modelInfoForId(id: string): AvailableModelInfo {
-  return AVAILABLE_MODELS.find((model) => model.id === id) ?? {
+function unknownModelInfo(id: string): AvailableModelInfo {
+  return {
     id,
     displayName: id,
     multiplier: 1,
@@ -76,7 +76,7 @@ export function AvailableModelsDialog({
   const knownModels = AVAILABLE_MODELS.filter((model) => availableIdSet.has(model.id))
   const unknownModels = availableModelIds
     .filter((id) => !catalogIdSet.has(id))
-    .map(modelInfoForId)
+    .map(unknownModelInfo)
   const models = [...knownModels, ...unknownModels]
 
   return (

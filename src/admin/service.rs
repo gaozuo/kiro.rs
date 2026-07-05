@@ -87,9 +87,13 @@ impl AdminService {
         let snapshot = self.token_manager.snapshot();
 
         let default_endpoint = self.config.read().default_endpoint.clone();
-        let available_model_ids = self
-            .token_manager
-            .available_model_ids()
+        let available_model_ids = crate::kiro::model::capabilities::union_model_ids_for_subscriptions(
+            snapshot
+                .entries
+                .iter()
+                .filter(|entry| !entry.disabled)
+                .map(|entry| entry.subscription_title.clone()),
+        )
             .into_iter()
             .map(str::to_string)
             .collect();

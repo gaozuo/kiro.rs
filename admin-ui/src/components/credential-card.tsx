@@ -228,6 +228,7 @@ export function CredentialCard({
       effectiveEndpoint: credential.effectiveEndpoint,
       region: credential.region,
       apiRegion: credential.apiRegion,
+      supportedModelIds,
       proxyUrl: credential.proxyUrl,
       proxyUsername: credential.proxyUsername,
       hasProfileArn: credential.hasProfileArn,
