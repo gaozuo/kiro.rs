@@ -11,6 +11,10 @@ use sha2::{Digest, Sha256};
 
 pub const SOCIAL_REDIRECT_URI: &str = "kiro://kiro.kiroAgent/authenticate-success";
 pub const BUILDER_ID_START_URL: &str = "https://view.awsapps.com/start";
+// KAM v1.8.9+ intentionally registers the AWS SSO OIDC client with a
+// no-port loopback redirect URI, then uses the real local callback port for
+// authorize/token. The no-port registration is required to get a client that
+// supports refresh-token grants.
 pub const IDC_REGISTER_REDIRECT_URI: &str = "http://127.0.0.1/oauth/callback";
 pub const IDC_CALLBACK_PORT: u16 = 49152;
 pub const OAUTH_SESSION_TTL_SECS: i64 = 600;
@@ -65,7 +69,7 @@ impl OAuthProvider {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthStartRequest {
     pub provider: OAuthProvider,
@@ -91,7 +95,7 @@ pub struct OAuthStartResponse {
     pub completion_mode: &'static str,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthCompleteRequest {
     pub session_id: String,
@@ -131,19 +135,19 @@ pub struct OAuthStatusResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ParsedCallback {
     pub code: String,
     pub state: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PkcePair {
     pub verifier: String,
     pub challenge: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OAuthSession {
     pub session_id: String,
     pub provider: OAuthProvider,
@@ -177,6 +181,7 @@ impl OAuthSession {
         self.state.clear();
         self.code_verifier = None;
         self.client_secret = None;
+        self.proxy_url = None;
         self.proxy_username = None;
         self.proxy_password = None;
     }
@@ -206,7 +211,7 @@ impl OAuthSession {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct OAuthSessionStore {
     sessions: Mutex<HashMap<String, OAuthSession>>,
 }
@@ -406,8 +411,12 @@ mod tests {
 
     #[test]
     fn callback_parser_rejects_missing_code() {
-        let err = parse_callback_input("kiro://kiro.kiroAgent/authenticate-success?state=state-1")
-            .unwrap_err();
+        let err = match parse_callback_input(
+            "kiro://kiro.kiroAgent/authenticate-success?state=state-1",
+        ) {
+            Ok(_) => panic!("callback without code should fail"),
+            Err(err) => err,
+        };
         assert!(err.to_string().contains("回调 URL 缺少 code"));
     }
 
@@ -424,6 +433,7 @@ mod tests {
     fn completed_session_clears_sensitive_fields() {
         let mut session = test_session();
         session.client_secret = Some("client-secret".to_string());
+        session.proxy_url = Some("https://proxy-user:proxy-pass@proxy.example".to_string());
         session.proxy_username = Some("proxy-user".to_string());
         session.proxy_password = Some("proxy-pass".to_string());
 
@@ -434,6 +444,7 @@ mod tests {
         assert!(session.state.is_empty());
         assert!(session.code_verifier.is_none());
         assert!(session.client_secret.is_none());
+        assert!(session.proxy_url.is_none());
         assert!(session.proxy_username.is_none());
         assert!(session.proxy_password.is_none());
     }
@@ -466,6 +477,18 @@ mod tests {
         assert!(url.contains("scopes=codewhisperer%3Acompletions%2Ccodewhisperer%3Aanalysis"));
         assert!(!url.contains("&scope="));
         assert!(url.contains("code_challenge=challenge"));
+    }
+
+    #[test]
+    fn idc_registration_and_authorize_redirects_match_kiro_flow() {
+        assert_eq!(
+            IDC_REGISTER_REDIRECT_URI,
+            "http://127.0.0.1/oauth/callback"
+        );
+        assert_eq!(
+            idc_callback_redirect_uri(),
+            "http://127.0.0.1:49152/oauth/callback"
+        );
     }
 
     fn test_session() -> OAuthSession {
