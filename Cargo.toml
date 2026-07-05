@@ -45,3 +45,5 @@ mime_guess = "2"      # MIME 类型推断
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }  # 图片处理
 base64 = "0.22"       # Base64 编解码
 tokio-stream = { version = "0.1", features = ["sync"] }  # SSE 用：mpsc::Receiver -> Stream
+getrandom = "0.2"    # OS randomness for OAuth state and PKCE verifier
+url = "2"            # URL/query parsing for pasted OAuth callback URLs

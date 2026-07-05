@@ -922,6 +922,7 @@ dependencies = [
  "crc",
  "fastrand",
  "futures",
+ "getrandom 0.2.17",
  "hex",
  "http",
  "image",
@@ -939,6 +940,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "uuid",
 ]
