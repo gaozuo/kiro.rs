@@ -1006,7 +1006,7 @@ async fn oauth_cancel_removes_session() {
 }
 
 #[tokio::test]
-async fn oauth_complete_wrong_state_records_failed_status() {
+async fn oauth_complete_wrong_state_keeps_session_pending() {
     let service = create_test_service();
     let response = service.start_oauth_login(
         crate::admin::oauth::OAuthStartRequest {
@@ -1032,8 +1032,8 @@ async fn oauth_complete_wrong_state_records_failed_status() {
     assert!(result.is_err());
     let status = service
         .oauth_status(&response.session_id)
-        .expect("failed session should remain visible");
-    assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
+        .expect("session should remain visible");
+    assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Pending);
     assert!(status.error.unwrap_or_default().contains("state 不匹配"));
 }
 
@@ -1063,8 +1063,8 @@ async fn oauth_complete_requires_callback_url() {
     assert!(result.unwrap_err().to_string().contains("callback URL"));
     let status = service
         .oauth_status(&response.session_id)
-        .expect("failed session should remain visible");
-    assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
+        .expect("session should remain visible");
+    assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Pending);
 }
 ```
 
@@ -1297,6 +1297,17 @@ fn fail_oauth_session(
     error
 }
 
+fn record_oauth_session_error(
+    &self,
+    mut session: OAuthSession,
+    error: AdminServiceError,
+) -> AdminServiceError {
+    session.state_kind = OAuthSessionState::Pending;
+    session.error = Some(error.to_string());
+    self.oauth_sessions.update(session);
+    error
+}
+
 pub async fn complete_oauth_login(
     &self,
     req: OAuthCompleteRequest,
@@ -1321,14 +1332,14 @@ pub async fn complete_oauth_login(
             let error = AdminServiceError::InvalidCredential(
                 "请粘贴 callback URL".to_string(),
             );
-            return Err(self.fail_oauth_session(session, error));
+            return Err(self.record_oauth_session_error(session, error));
         }
     };
     let parsed = match parse_callback_input(callback_url) {
         Ok(parsed) => parsed,
         Err(e) => {
             let error = AdminServiceError::InvalidCredential(e.to_string());
-            return Err(self.fail_oauth_session(session, error));
+            return Err(self.record_oauth_session_error(session, error));
         }
     };
 
@@ -1336,7 +1347,7 @@ pub async fn complete_oauth_login(
         let error = AdminServiceError::InvalidCredential(
             "state 不匹配，请重新开始登录".to_string(),
         );
-        return Err(self.fail_oauth_session(session, error));
+        return Err(self.record_oauth_session_error(session, error));
     }
 
     let code_verifier = match session.code_verifier.take() {
@@ -1472,7 +1483,7 @@ Run:
 ```bash
 docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_start
 docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_cancel
-docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_complete_wrong_state_records_failed_status
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_complete_wrong_state_keeps_session_pending
 ```
 
 Expected: PASS for start/status/cancel tests and for the failed-session status retention test. Complete success mapping is covered by pure mapper tests and route-level wiring is covered in the next task.
@@ -1581,7 +1592,7 @@ Run:
 docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test admin::oauth
 docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_start
 docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_cancel
-docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_complete_wrong_state_records_failed_status
+docker run --rm -v "$PWD":/workspace -w /workspace rust:1.88 cargo test oauth_complete_wrong_state_keeps_session_pending
 git diff --check
 ```
 

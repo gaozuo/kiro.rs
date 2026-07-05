@@ -253,6 +253,8 @@ States:
 - `cancelled`
 - `expired`
 
+Recoverable pasted-input errors such as a missing callback URL, malformed callback URL, or mismatched `state` keep the session `pending` with an `error` message so the user can paste again. Token exchange and credential persistence failures move the session to `failed`.
+
 ### `POST /api/admin/oauth/cancel/{sessionId}`
 
 Cancels and removes a pending session.

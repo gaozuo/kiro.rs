@@ -270,6 +270,17 @@ impl AdminService {
         error
     }
 
+    fn record_oauth_session_error(
+        &self,
+        mut session: OAuthSession,
+        error: AdminServiceError,
+    ) -> AdminServiceError {
+        session.state_kind = OAuthSessionState::Pending;
+        session.error = Some(error.to_string());
+        self.oauth_sessions.update(session);
+        error
+    }
+
     /// 设置凭据级 Web Portal Idp
     pub fn set_idp(&self, id: u64, idp: Option<String>) -> Result<(), AdminServiceError> {
         self.token_manager
@@ -661,21 +672,21 @@ impl AdminService {
             None => {
                 let error =
                     AdminServiceError::InvalidCredential("请粘贴 callback URL".to_string());
-                return Err(self.fail_oauth_session(session, error));
+                return Err(self.record_oauth_session_error(session, error));
             }
         };
         let parsed = match parse_callback_input(callback_url) {
             Ok(parsed) => parsed,
             Err(e) => {
                 let error = AdminServiceError::InvalidCredential(e.to_string());
-                return Err(self.fail_oauth_session(session, error));
+                return Err(self.record_oauth_session_error(session, error));
             }
         };
 
         if parsed.state != session.state {
             let error =
                 AdminServiceError::InvalidCredential("state 不匹配，请重新开始登录".to_string());
-            return Err(self.fail_oauth_session(session, error));
+            return Err(self.record_oauth_session_error(session, error));
         }
 
         let code_verifier = match session.code_verifier.take() {
@@ -1719,7 +1730,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_complete_wrong_state_records_failed_status() {
+    async fn oauth_complete_wrong_state_keeps_session_pending() {
         let service = create_test_service();
         let response = service
             .start_oauth_login(crate::admin::oauth::OAuthStartRequest {
@@ -1748,8 +1759,8 @@ mod tests {
         assert!(result.is_err());
         let status = service
             .oauth_status(&response.session_id)
-            .expect("failed status should be retained");
-        assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
+            .expect("session should remain visible");
+        assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Pending);
         assert!(
             status
                 .error
@@ -1787,8 +1798,8 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("callback URL"));
         let status = service
             .oauth_status(&response.session_id)
-            .expect("failed status should be retained");
-        assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
+            .expect("session should remain visible");
+        assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Pending);
     }
 
     #[tokio::test]
