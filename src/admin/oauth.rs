@@ -223,6 +223,9 @@ impl OAuthSessionStore {
 
     pub fn insert(&self, session: OAuthSession) {
         self.prune_expired();
+        if session.is_expired(Utc::now()) {
+            return;
+        }
         self.sessions
             .lock()
             .insert(session.session_id.clone(), session);
@@ -235,6 +238,10 @@ impl OAuthSessionStore {
 
     pub fn update(&self, mut session: OAuthSession) {
         self.prune_expired();
+        if session.is_expired(Utc::now()) {
+            self.sessions.lock().remove(&session.session_id);
+            return;
+        }
         if matches!(
             session.state_kind,
             OAuthSessionState::Completed
@@ -460,6 +467,18 @@ mod tests {
         store.update(session);
 
         assert!(store.get(&id).is_none());
+    }
+
+    #[test]
+    fn session_store_does_not_insert_expired_sessions() {
+        let store = OAuthSessionStore::new();
+        let mut session = test_session();
+        session.expires_at = Utc::now() - Duration::seconds(1);
+        let id = session.session_id.clone();
+
+        store.insert(session);
+
+        assert!(store.sessions.lock().get(&id).is_none());
     }
 
     #[test]
