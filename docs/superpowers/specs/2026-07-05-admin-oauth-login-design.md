@@ -206,7 +206,7 @@ Validation:
 
 ### `POST /api/admin/oauth/complete`
 
-Completes a login session from pasted callback URL or raw code/state.
+Completes a login session from a pasted callback URL.
 
 Request:
 
@@ -217,7 +217,7 @@ Request:
 }
 ```
 
-The backend accepts either a full URL or an object with explicit `code` and `state`. Full URL is the primary UI path.
+The backend accepts a full callback URL only. It parses `code` and `state` from that URL server-side.
 
 Response:
 

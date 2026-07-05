@@ -270,6 +270,16 @@ impl AdminService {
         error
     }
 
+    fn expire_oauth_session(&self, mut session: OAuthSession) -> AdminServiceError {
+        let error =
+            AdminServiceError::InvalidCredential("登录会话已过期，请重新开始".to_string());
+        session.state_kind = OAuthSessionState::Expired;
+        session.error = Some(error.to_string());
+        session.expires_at = session_expiry(Utc::now());
+        self.oauth_sessions.update(session);
+        error
+    }
+
     /// 设置凭据级 Web Portal Idp
     pub fn set_idp(&self, id: u64, idp: Option<String>) -> Result<(), AdminServiceError> {
         self.token_manager
@@ -646,50 +656,27 @@ impl AdminService {
             AdminServiceError::InvalidCredential("登录会话已过期，请重新开始".to_string())
         })?;
         if session.is_expired(Utc::now()) {
-            return Err(AdminServiceError::InvalidCredential(
-                "登录会话已过期，请重新开始".to_string(),
-            ));
+            return Err(self.expire_oauth_session(session));
         }
 
-        let parsed = match req.callback_url.as_deref() {
-            Some(callback_url) => match parse_callback_input(callback_url) {
-                Ok(parsed) => parsed,
-                Err(e) => {
-                    let error = AdminServiceError::InvalidCredential(e.to_string());
-                    return Err(self.fail_oauth_session(session, error));
-                }
-            },
+        let callback_url = match req
+            .callback_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|callback_url| !callback_url.is_empty())
+        {
+            Some(callback_url) => callback_url,
             None => {
-                let code = match req
-                    .code
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty()) {
-                    Some(code) => code,
-                    None => {
-                        let error = AdminServiceError::InvalidCredential(
-                            "回调 URL 缺少 code".to_string(),
-                        );
-                        return Err(self.fail_oauth_session(session, error));
-                    }
-                };
-                let state = match req
-                    .state
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty()) {
-                    Some(state) => state,
-                    None => {
-                        let error = AdminServiceError::InvalidCredential(
-                            "回调 URL 缺少 state".to_string(),
-                        );
-                        return Err(self.fail_oauth_session(session, error));
-                    }
-                };
-                crate::admin::oauth::ParsedCallback {
-                    code: code.to_string(),
-                    state: state.to_string(),
-                }
+                let error =
+                    AdminServiceError::InvalidCredential("请粘贴 callback URL".to_string());
+                return Err(self.fail_oauth_session(session, error));
+            }
+        };
+        let parsed = match parse_callback_input(callback_url) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                let error = AdminServiceError::InvalidCredential(e.to_string());
+                return Err(self.fail_oauth_session(session, error));
             }
         };
 
@@ -1763,8 +1750,6 @@ mod tests {
                     "kiro://kiro.kiroAgent/authenticate-success?code=abc&state=wrong"
                         .to_string(),
                 ),
-                code: None,
-                state: None,
             })
             .await;
 
@@ -1780,6 +1765,83 @@ mod tests {
                 .unwrap_or_default()
                 .contains("state 不匹配")
         );
+    }
+
+    #[tokio::test]
+    async fn oauth_complete_requires_callback_url() {
+        let service = create_test_service();
+        let response = service
+            .start_oauth_login(crate::admin::oauth::OAuthStartRequest {
+                provider: crate::admin::oauth::OAuthProvider::Google,
+                region: Some("us-east-1".to_string()),
+                start_url: None,
+                priority: 0,
+                endpoint: None,
+                proxy_url: None,
+                proxy_username: None,
+                proxy_password: None,
+            })
+            .await
+            .expect("start should succeed");
+
+        let result = service
+            .complete_oauth_login(crate::admin::oauth::OAuthCompleteRequest {
+                session_id: response.session_id.clone(),
+                callback_url: None,
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("callback URL"));
+        let status = service
+            .oauth_status(&response.session_id)
+            .expect("failed status should be retained");
+        assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
+    }
+
+    #[tokio::test]
+    async fn oauth_complete_expired_session_records_expired_status() {
+        let service = create_test_service();
+        let response = service
+            .start_oauth_login(crate::admin::oauth::OAuthStartRequest {
+                provider: crate::admin::oauth::OAuthProvider::Google,
+                region: Some("us-east-1".to_string()),
+                start_url: None,
+                priority: 0,
+                endpoint: None,
+                proxy_url: None,
+                proxy_username: None,
+                proxy_password: None,
+            })
+            .await
+            .expect("start should succeed");
+
+        let mut session = service
+            .oauth_sessions
+            .remove(&response.session_id)
+            .expect("session should exist");
+        session.expires_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+        service.oauth_sessions.insert_for_test(session);
+
+        let result = service
+            .complete_oauth_login(crate::admin::oauth::OAuthCompleteRequest {
+                session_id: response.session_id.clone(),
+                callback_url: Some(
+                    "kiro://kiro.kiroAgent/authenticate-success?code=abc&state=ignored"
+                        .to_string(),
+                ),
+            })
+            .await;
+
+        assert!(result.is_err());
+        let status = service
+            .oauth_status(&response.session_id)
+            .expect("expired status should be retained");
+        assert_eq!(
+            status.state,
+            crate::admin::oauth::OAuthSessionState::Expired
+        );
+        assert!(status.error.unwrap_or_default().contains("登录会话已过期"));
     }
 
     #[test]

@@ -236,8 +236,6 @@ pub struct OAuthStartResponse {
 pub struct OAuthCompleteRequest {
     pub session_id: String,
     pub callback_url: Option<String>,
-    pub code: Option<String>,
-    pub state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1028,8 +1026,6 @@ async fn oauth_complete_wrong_state_records_failed_status() {
         callback_url: Some(
             "kiro://kiro.kiroAgent/authenticate-success?code=abc&state=wrong".to_string(),
         ),
-        code: None,
-        state: None,
     }).await;
 
     assert!(result.is_err());
@@ -1038,6 +1034,36 @@ async fn oauth_complete_wrong_state_records_failed_status() {
         .expect("failed session should remain visible");
     assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
     assert!(status.error.unwrap_or_default().contains("state 不匹配"));
+}
+
+#[tokio::test]
+async fn oauth_complete_requires_callback_url() {
+    let service = create_test_service();
+    let response = service.start_oauth_login(
+        crate::admin::oauth::OAuthStartRequest {
+            provider: crate::admin::oauth::OAuthProvider::Google,
+            region: Some("us-east-1".to_string()),
+            start_url: None,
+            priority: 0,
+            endpoint: None,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+        },
+    ).await
+    .expect("start should succeed");
+
+    let result = service.complete_oauth_login(crate::admin::oauth::OAuthCompleteRequest {
+        session_id: response.session_id.clone(),
+        callback_url: None,
+    }).await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("callback URL"));
+    let status = service
+        .oauth_status(&response.session_id)
+        .expect("failed session should remain visible");
+    assert_eq!(status.state, crate::admin::oauth::OAuthSessionState::Failed);
 }
 ```
 
@@ -1270,6 +1296,17 @@ fn fail_oauth_session(
     error
 }
 
+fn expire_oauth_session(&self, mut session: OAuthSession) -> AdminServiceError {
+    let error = AdminServiceError::InvalidCredential(
+        "登录会话已过期，请重新开始".to_string(),
+    );
+    session.state_kind = OAuthSessionState::Expired;
+    session.error = Some(error.to_string());
+    session.expires_at = session_expiry(Utc::now());
+    self.oauth_sessions.update(session);
+    error
+}
+
 pub async fn complete_oauth_login(
     &self,
     req: OAuthCompleteRequest,
@@ -1278,33 +1315,24 @@ pub async fn complete_oauth_login(
         AdminServiceError::InvalidCredential("登录会话已过期，请重新开始".to_string())
     })?;
     if session.is_expired(Utc::now()) {
-        let error = AdminServiceError::InvalidCredential(
-            "登录会话已过期，请重新开始".to_string(),
-        );
-        return Err(self.fail_oauth_session(session, error));
+        return Err(self.expire_oauth_session(session));
     }
 
-    let parsed_result = if let Some(callback_url) = req.callback_url.as_deref() {
-        parse_callback_input(callback_url)
-    } else {
-        let code = req
-            .code
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("回调 URL 缺少 code"))?;
-        let state = req
-            .state
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("回调 URL 缺少 state"))?;
-        Ok(crate::admin::oauth::ParsedCallback {
-            code: code.to_string(),
-            state: state.to_string(),
-        })
+    let callback_url = match req
+        .callback_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|callback_url| !callback_url.is_empty())
+    {
+        Some(callback_url) => callback_url,
+        None => {
+            let error = AdminServiceError::InvalidCredential(
+                "请粘贴 callback URL".to_string(),
+            );
+            return Err(self.fail_oauth_session(session, error));
+        }
     };
-    let parsed = match parsed_result {
+    let parsed = match parse_callback_input(callback_url) {
         Ok(parsed) => parsed,
         Err(e) => {
             let error = AdminServiceError::InvalidCredential(e.to_string());

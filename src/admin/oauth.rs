@@ -105,8 +105,6 @@ pub struct OAuthStartResponse {
 pub struct OAuthCompleteRequest {
     pub session_id: String,
     pub callback_url: Option<String>,
-    pub code: Option<String>,
-    pub state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -277,6 +275,13 @@ impl OAuthSessionStore {
 
     pub fn remove(&self, session_id: &str) -> Option<OAuthSession> {
         self.sessions.lock().remove(session_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(&self, session: OAuthSession) {
+        self.sessions
+            .lock()
+            .insert(session.session_id.clone(), session);
     }
 
     fn prune_expired(&self) {
