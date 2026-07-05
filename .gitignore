@@ -33,4 +33,4 @@ __pycache__/
 config/
 tmp/
 .planning/
-
+.worktrees/
