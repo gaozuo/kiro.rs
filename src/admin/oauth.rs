@@ -541,10 +541,13 @@ pub async fn exchange_social_token(
         .context("Social token exchange request failed")?;
 
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("Token 交换失败，请重新授权: {} {}", status, text);
+        bail!("Token 交换失败，请重新授权 (HTTP {})", status);
     }
+    let text = resp
+        .text()
+        .await
+        .context("Social token exchange response read failed")?;
 
     serde_json::from_str(&text).context("Social token exchange response parse failed")
 }
@@ -576,10 +579,16 @@ pub async fn register_idc_client(
         .context("AWS SSO client registration request failed")?;
 
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("AWS SSO client 注册失败，请检查 region/startUrl: {} {}", status, text);
+        bail!(
+            "AWS SSO client 注册失败，请检查 region/startUrl (HTTP {})",
+            status
+        );
     }
+    let text = resp
+        .text()
+        .await
+        .context("AWS SSO client registration response read failed")?;
 
     serde_json::from_str(&text).context("AWS SSO client registration parse failed")
 }
@@ -614,10 +623,13 @@ pub async fn exchange_idc_token(
         .context("AWS SSO token exchange request failed")?;
 
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("Token 交换失败，请重新授权: {} {}", status, text);
+        bail!("Token 交换失败，请重新授权 (HTTP {})", status);
     }
+    let text = resp
+        .text()
+        .await
+        .context("AWS SSO token exchange response read failed")?;
 
     serde_json::from_str(&text).context("AWS SSO token exchange parse failed")
 }
