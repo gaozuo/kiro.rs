@@ -9,6 +9,7 @@ use futures::StreamExt;
 
 use super::{
     middleware::AdminState,
+    oauth::{OAuthCompleteRequest, OAuthStartRequest},
     types::{
         AddCredentialRequest, ImportTokenJsonRequest, OverageStatusResponse,
         SetCredentialProxyRequest, SetDisabledRequest, SetEndpointRequest, SetIdpRequest,
@@ -172,6 +173,50 @@ pub async fn import_token_json(
 ) -> impl IntoResponse {
     let response = state.service.import_token_json(payload).await;
     Json(response)
+}
+
+/// POST /api/admin/oauth/start
+pub async fn start_oauth_login(
+    State(state): State<AdminState>,
+    Json(payload): Json<OAuthStartRequest>,
+) -> impl IntoResponse {
+    match state.service.start_oauth_login(payload).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/oauth/complete
+pub async fn complete_oauth_login(
+    State(state): State<AdminState>,
+    Json(payload): Json<OAuthCompleteRequest>,
+) -> impl IntoResponse {
+    match state.service.complete_oauth_login(payload).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// GET /api/admin/oauth/status/:session_id
+pub async fn get_oauth_status(
+    State(state): State<AdminState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    match state.service.oauth_status(&session_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/oauth/cancel/:session_id
+pub async fn cancel_oauth_login(
+    State(state): State<AdminState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    match state.service.cancel_oauth_login(&session_id) {
+        Ok(_) => Json(SuccessResponse::new("OAuth 登录已取消")).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
 }
 
 /// GET /proxy - 获取全局代理配置
