@@ -234,6 +234,18 @@ impl AdminService {
                         "Enterprise Start URL 必须以 https:// 开头".to_string(),
                     ));
                 }
+                let parsed = url::Url::parse(&value).map_err(|_| {
+                    AdminServiceError::InvalidCredential(
+                        "Enterprise Start URL 格式无效".to_string(),
+                    )
+                })?;
+                if parsed.host_str().is_none()
+                    || (parsed.path() != "/start" && !parsed.path().ends_with("/start"))
+                {
+                    return Err(AdminServiceError::InvalidCredential(
+                        "Enterprise Start URL 路径必须为 /start 或以 /start 结尾".to_string(),
+                    ));
+                }
                 Ok(Some(value))
             }
             OAuthProvider::Google | OAuthProvider::Github => Ok(None),
@@ -1671,11 +1683,34 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Enterprise 需要填写 Start URL")
+        match result {
+            Ok(_) => panic!("Enterprise without Start URL should fail"),
+            Err(err) => assert!(err.to_string().contains("Enterprise 需要填写 Start URL")),
+        }
+    }
+
+    #[test]
+    fn oauth_enterprise_start_url_requires_start_path() {
+        let result = AdminService::normalize_oauth_start_url(
+            crate::admin::oauth::OAuthProvider::Enterprise,
+            Some("https://example.com/not-start".to_string()),
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("/start"));
+    }
+
+    #[test]
+    fn oauth_enterprise_start_url_accepts_nested_start_path() {
+        let result = AdminService::normalize_oauth_start_url(
+            crate::admin::oauth::OAuthProvider::Enterprise,
+            Some("https://d-1234567890.awsapps.com/start".to_string()),
+        )
+        .expect("start URL should normalize");
+
+        assert_eq!(
+            result.as_deref(),
+            Some("https://d-1234567890.awsapps.com/start")
         );
     }
 

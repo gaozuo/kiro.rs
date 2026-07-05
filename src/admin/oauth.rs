@@ -87,7 +87,7 @@ pub struct OAuthStartRequest {
     pub proxy_password: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthStartResponse {
     pub session_id: String,
