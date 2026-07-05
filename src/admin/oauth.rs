@@ -2,12 +2,16 @@
 
 use std::collections::HashMap;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::http_client::{ProxyConfig, build_client};
+use crate::kiro::model::credentials::KiroCredentials;
+use crate::model::config::Config;
 
 pub const SOCIAL_REDIRECT_URI: &str = "kiro://kiro.kiroAgent/authenticate-success";
 pub const BUILDER_ID_START_URL: &str = "https://view.awsapps.com/start";
@@ -393,6 +397,231 @@ pub fn build_idc_authorize_url(
     )
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SocialTokenResponse {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "refreshToken")]
+    pub refresh_token: String,
+    #[serde(rename = "profileArn")]
+    pub profile_arn: Option<String>,
+    #[serde(rename = "expiresIn")]
+    pub expires_in: Option<i64>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdcClientRegistration {
+    #[serde(rename = "clientId")]
+    pub client_id: String,
+    #[serde(rename = "clientSecret")]
+    pub client_secret: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdcTokenResponse {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "refreshToken")]
+    pub refresh_token: String,
+    #[serde(rename = "expiresIn")]
+    pub expires_in: Option<i64>,
+    #[serde(rename = "idToken")]
+    pub id_token: Option<String>,
+    #[serde(rename = "tokenType")]
+    pub token_type: Option<String>,
+}
+
+fn expires_at_from_now(expires_in: Option<i64>) -> Option<String> {
+    expires_in.map(|seconds| (Utc::now() + Duration::seconds(seconds)).to_rfc3339())
+}
+
+pub fn map_social_credentials(
+    session: &OAuthSession,
+    token: SocialTokenResponse,
+) -> KiroCredentials {
+    KiroCredentials {
+        runtime_only: false,
+        id: None,
+        access_token: Some(token.access_token),
+        refresh_token: Some(token.refresh_token),
+        kiro_api_key: None,
+        profile_arn: token.profile_arn,
+        expires_at: expires_at_from_now(token.expires_in),
+        auth_method: Some(session.auth_method.as_credential_value().to_string()),
+        client_id: None,
+        client_secret: None,
+        priority: session.priority,
+        region: Some(session.region.clone()),
+        api_region: None,
+        machine_id: Some(session.machine_id.clone()),
+        email: None,
+        subscription_title: None,
+        proxy_url: session.proxy_url.clone(),
+        proxy_username: session.proxy_username.clone(),
+        proxy_password: session.proxy_password.clone(),
+        endpoint: session.endpoint.clone(),
+        idp: Some(session.provider.as_str().to_string()),
+        overage_enabled: None,
+        disabled: false,
+    }
+}
+
+pub fn map_idc_credentials(
+    session: &OAuthSession,
+    token: IdcTokenResponse,
+) -> anyhow::Result<KiroCredentials> {
+    let client_id = session
+        .client_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("IdC session missing clientId"))?;
+    let client_secret = session
+        .client_secret
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("IdC session missing clientSecret"))?;
+
+    Ok(KiroCredentials {
+        runtime_only: false,
+        id: None,
+        access_token: Some(token.access_token),
+        refresh_token: Some(token.refresh_token),
+        kiro_api_key: None,
+        profile_arn: None,
+        expires_at: expires_at_from_now(token.expires_in),
+        auth_method: Some(session.auth_method.as_credential_value().to_string()),
+        client_id: Some(client_id),
+        client_secret: Some(client_secret),
+        priority: session.priority,
+        region: Some(session.region.clone()),
+        api_region: None,
+        machine_id: Some(session.machine_id.clone()),
+        email: None,
+        subscription_title: None,
+        proxy_url: session.proxy_url.clone(),
+        proxy_username: session.proxy_username.clone(),
+        proxy_password: session.proxy_password.clone(),
+        endpoint: session.endpoint.clone(),
+        idp: None,
+        overage_enabled: None,
+        disabled: false,
+    })
+}
+
+pub async fn exchange_social_token(
+    code: &str,
+    code_verifier: &str,
+    redirect_uri: &str,
+    machine_id: &str,
+    config: &Config,
+    proxy: Option<&ProxyConfig>,
+) -> anyhow::Result<SocialTokenResponse> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        code: &'a str,
+        code_verifier: &'a str,
+        redirect_uri: &'a str,
+    }
+
+    let client = build_client(proxy, 60, config.tls_backend)?;
+    let user_agent = format!("KiroIDE-{}-{}", config.kiro_version, machine_id);
+    let resp = client
+        .post("https://prod.us-east-1.auth.desktop.kiro.dev/oauth/token")
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Content-Type", "application/json")
+        .header("User-Agent", user_agent)
+        .json(&Body {
+            code,
+            code_verifier,
+            redirect_uri,
+        })
+        .send()
+        .await
+        .context("Social token exchange request failed")?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        bail!("Token 交换失败，请重新授权: {} {}", status, text);
+    }
+
+    serde_json::from_str(&text).context("Social token exchange response parse failed")
+}
+
+pub async fn register_idc_client(
+    region: &str,
+    start_url: &str,
+    config: &Config,
+    proxy: Option<&ProxyConfig>,
+) -> anyhow::Result<IdcClientRegistration> {
+    let client = build_client(proxy, 60, config.tls_backend)?;
+    let url = format!("https://oidc.{}.amazonaws.com/client/register", region);
+    let scopes: Vec<String> = IDC_SCOPES.iter().map(|scope| (*scope).to_string()).collect();
+    let body = serde_json::json!({
+        "clientName": "Kiro IDE",
+        "clientType": "public",
+        "scopes": scopes,
+        "grantTypes": ["authorization_code", "refresh_token"],
+        "redirectUris": [IDC_REGISTER_REDIRECT_URI],
+        "issuerUrl": start_url
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .context("AWS SSO client registration request failed")?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        bail!("AWS SSO client 注册失败，请检查 region/startUrl: {} {}", status, text);
+    }
+
+    serde_json::from_str(&text).context("AWS SSO client registration parse failed")
+}
+
+pub async fn exchange_idc_token(
+    region: &str,
+    client_id: &str,
+    client_secret: &str,
+    code: &str,
+    code_verifier: &str,
+    redirect_uri: &str,
+    config: &Config,
+    proxy: Option<&ProxyConfig>,
+) -> anyhow::Result<IdcTokenResponse> {
+    let client = build_client(proxy, 60, config.tls_backend)?;
+    let url = format!("https://oidc.{}.amazonaws.com/token", region);
+    let body = serde_json::json!({
+        "clientId": client_id,
+        "clientSecret": client_secret,
+        "grantType": "authorization_code",
+        "code": code,
+        "codeVerifier": code_verifier,
+        "redirectUri": redirect_uri
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .context("AWS SSO token exchange request failed")?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        bail!("Token 交换失败，请重新授权: {} {}", status, text);
+    }
+
+    serde_json::from_str(&text).context("AWS SSO token exchange parse failed")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,6 +778,96 @@ mod tests {
             idc_callback_redirect_uri(),
             "http://127.0.0.1:49152/oauth/callback"
         );
+    }
+
+    #[test]
+    fn social_mapper_preserves_provider_identity() {
+        let session = OAuthSession {
+            session_id: "s1".to_string(),
+            provider: OAuthProvider::Github,
+            auth_method: AuthMethod::Social,
+            state: "state".to_string(),
+            code_verifier: Some("verifier".to_string()),
+            redirect_uri: SOCIAL_REDIRECT_URI.to_string(),
+            region: "us-east-1".to_string(),
+            start_url: None,
+            client_id: None,
+            client_secret: None,
+            machine_id: "machine-1".to_string(),
+            priority: 7,
+            endpoint: Some("ide".to_string()),
+            proxy_url: Some("direct".to_string()),
+            proxy_username: None,
+            proxy_password: None,
+            created_at: Utc::now(),
+            expires_at: session_expiry(Utc::now()),
+            state_kind: OAuthSessionState::Pending,
+            credential_id: None,
+            error: None,
+        };
+        let token = SocialTokenResponse {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            profile_arn: Some("arn:aws:kiro:profile".to_string()),
+            expires_in: Some(3600),
+        };
+
+        let cred = map_social_credentials(&session, token);
+        assert_eq!(cred.auth_method.as_deref(), Some("social"));
+        assert_eq!(cred.access_token.as_deref(), Some("access"));
+        assert_eq!(cred.refresh_token.as_deref(), Some("refresh"));
+        assert_eq!(cred.profile_arn.as_deref(), Some("arn:aws:kiro:profile"));
+        assert_eq!(cred.machine_id.as_deref(), Some("machine-1"));
+        assert_eq!(cred.idp.as_deref(), Some("Github"));
+        assert_eq!(cred.priority, 7);
+        assert_eq!(cred.endpoint.as_deref(), Some("ide"));
+        assert_eq!(cred.proxy_url.as_deref(), Some("direct"));
+        assert!(cred.expires_at.is_some());
+    }
+
+    #[test]
+    fn idc_mapper_sets_refresh_fields() {
+        let session = OAuthSession {
+            session_id: "s1".to_string(),
+            provider: OAuthProvider::BuilderId,
+            auth_method: AuthMethod::Idc,
+            state: "state".to_string(),
+            code_verifier: Some("verifier".to_string()),
+            redirect_uri: idc_callback_redirect_uri(),
+            region: "us-west-2".to_string(),
+            start_url: Some(BUILDER_ID_START_URL.to_string()),
+            client_id: Some("client-id".to_string()),
+            client_secret: Some("client-secret".to_string()),
+            machine_id: "machine-2".to_string(),
+            priority: 3,
+            endpoint: None,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+            created_at: Utc::now(),
+            expires_at: session_expiry(Utc::now()),
+            state_kind: OAuthSessionState::Pending,
+            credential_id: None,
+            error: None,
+        };
+        let token = IdcTokenResponse {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_in: Some(7200),
+            id_token: Some("id-token".to_string()),
+            token_type: Some("Bearer".to_string()),
+        };
+
+        let cred = map_idc_credentials(&session, token).expect("credential maps");
+        assert_eq!(cred.auth_method.as_deref(), Some("idc"));
+        assert_eq!(cred.access_token.as_deref(), Some("access"));
+        assert_eq!(cred.refresh_token.as_deref(), Some("refresh"));
+        assert_eq!(cred.client_id.as_deref(), Some("client-id"));
+        assert_eq!(cred.client_secret.as_deref(), Some("client-secret"));
+        assert_eq!(cred.region.as_deref(), Some("us-west-2"));
+        assert_eq!(cred.machine_id.as_deref(), Some("machine-2"));
+        assert!(cred.profile_arn.is_none());
+        assert!(cred.expires_at.is_some());
     }
 
     fn test_session() -> OAuthSession {
