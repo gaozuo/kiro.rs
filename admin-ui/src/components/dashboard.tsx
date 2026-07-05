@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, Trash2, RotateCcw, CheckCircle2, Globe, ArrowUp, ArrowDown, Boxes } from 'lucide-react'
+import { KeyRound, RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, Trash2, RotateCcw, CheckCircle2, Globe, ArrowUp, ArrowDown, Boxes } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
@@ -9,6 +9,7 @@ import { CredentialCard } from '@/components/credential-card'
 import { BalanceDialog } from '@/components/balance-dialog'
 import { AddCredentialDialog } from '@/components/add-credential-dialog'
 import { ImportTokenJsonDialog } from '@/components/import-token-json-dialog'
+import { OAuthLoginDialog } from '@/components/oauth-login-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ProxyConfigDialog } from '@/components/proxy-config-dialog'
 import { GlobalConfigDialog } from '@/components/global-config-dialog'
@@ -32,6 +33,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [forceRefreshBalance, setForceRefreshBalance] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [oauthDialogOpen, setOauthDialogOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [verifyDialogOpen, setVerifyDialogOpen] = useState(false)
   const [proxyConfigDialogOpen, setProxyConfigDialogOpen] = useState(false)
@@ -756,6 +758,10 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <Upload className="h-4 w-4 mr-2" />
                 导入凭据
               </Button>
+              <Button variant="outline" onClick={() => setOauthDialogOpen(true)} size="sm">
+                <KeyRound className="h-4 w-4 mr-2" />
+                OAuth 登录
+              </Button>
               <Button onClick={() => setAddDialogOpen(true)} size="sm">
                 <Plus className="h-4 w-4 mr-2" />
                 添加凭据
@@ -839,6 +845,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
       <ImportTokenJsonDialog
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
+      />
+
+      {/* OAuth 登录对话框 */}
+      <OAuthLoginDialog
+        open={oauthDialogOpen}
+        onOpenChange={setOauthDialogOpen}
       />
 
       {/* 全局配置对话框 */}
